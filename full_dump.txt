@@ -1,0 +1,717 @@
+==================== src/client/mod.rs ====================
+use crate::gateway::{self, Gateway};
+use crate::structs::gateway::GatewayIntents;
+
+/// Represents the state of the Client (authenticated or not)
+enum ClientState {
+    Unauthenticated,
+    Authenticated,
+}
+
+/// High-level Discord client: manages state and gateway.
+pub struct Client {
+    token: String,
+    intents: GatewayIntents,
+    state: ClientState,
+    gateway: Option<Gateway>,
+}
+
+impl Client {
+    /// Connects to Discord's Gateway, starts heartbeating, sends IDENTIFY,
+    /// waits for READY, and then **keeps the client alive** until either:
+    /// - The Gateway connection closes, in which case it will attempt RESUME or reconnect.
+    /// - The process receives Ctrl+C (SIGINT).
+    ///
+    /// This method will not return until the client shuts down.
+    pub async fn login(&mut self) -> anyhow::Result<()> {
+        // Initial connection (IDENTIFY)
+        let gateway = gateway::ws::connect(&self.token, self.intents).await?;
+        self.state = ClientState::Authenticated;
+        println!("Client authenticated (session_id={})", gateway.session_id);
+        self.gateway = Some(gateway);
+
+        println!("Client is now running. Press Ctrl+C to exit.");
+
+        loop {
+            // Access the gateway object for receiving events
+            let gw = self.gateway.as_mut().expect("gateway must exist");
+
+            tokio::select! {
+                // --- Incoming Gateway event ---
+                maybe_evt = gw.events_rx.recv() => {
+                    match maybe_evt {
+                        Some(evt) => {
+                            // Log the event type for visibility
+                            if let Some(t) = evt.get("t").and_then(|v| v.as_str()) {
+                                println!("[DISPATCH] {}", t);
+                            }
+                        }
+                        None => {
+                            // The Gateway reader task has ended: connection closed
+                            eprintln!("events_rx closed — attempting reconnection…");
+
+                            // Take ownership of the old Gateway, leaving None in self.gateway
+                            let old_gw = self.gateway.take().expect("gateway must exist");
+
+                            // Preserve session information for potential RESUME
+                            let session_id = old_gw.session_id.clone();
+                            let resume_url = old_gw.resume_gateway_url.clone();
+                            let last_seq = old_gw.last_seq_rx.borrow().clone();
+                            // old_gw is dropped here — closing the old connection
+
+                            // Exponential backoff for repeated failures
+                            let mut delay = std::time::Duration::from_secs(1);
+
+                            loop {
+                                // 1) Try to RESUME
+                                match gateway::ws::resume(&self.token, &session_id, &resume_url, last_seq).await {
+                                    Ok(new_gw) => {
+                                        println!("RESUMED successfully ✅");
+                                        self.gateway = Some(new_gw);
+                                        break; // Back to main loop
+                                    }
+                                    Err(err) => {
+                                        eprintln!("RESUME failed: {err}");
+
+                                        // 2) Fallback to full reconnect (IDENTIFY)
+                                        match gateway::ws::connect(&self.token, self.intents).await {
+                                            Ok(new_gw) => {
+                                                println!("Re-IDENTIFY successful ✅ (fresh session_id={})", new_gw.session_id);
+                                                self.gateway = Some(new_gw);
+                                                break;
+                                            }
+                                            Err(e2) => {
+                                                eprintln!("Re-connect (IDENTIFY) failed: {e2}. Retrying in {:?}…", delay);
+                                                tokio::time::sleep(delay).await;
+                                                delay = std::cmp::min(delay * 2, std::time::Duration::from_secs(60));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // --- Shutdown signal (Ctrl+C) ---
+                _ = tokio::signal::ctrl_c() => {
+                    println!("Ctrl+C received — shutting down.");
+                    break;
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+==================== src/structs/mod.rs ====================
+pub mod gateway;
+
+==================== src/structs/gateway.rs ====================
+use bitflags::bitflags;
+
+
+bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    /**
+     * Gateway intents define which events your bot will receive from Discord's gateway
+     * Selecting only the necessary intents helps improve performance
+     * 
+     * Some intents are considered **privileged**, meaning they must be explicitly enabled
+     * in the [Discord Developer Portal](https://discord.com/developers/applications)
+     * 
+     * For more details, see [Discord's documentation](https://discord.com/developers/docs/topics/gateway#gateway-intents)
+     */
+    pub struct GatewayIntents: u64 {
+        /// Events related to guilds: creation, updates, deletions, roles, channels, threads, etc
+        const GUILDS = 1 << 0;
+
+        /// Events about guild members joining, leaving, or updating
+        /// This is a **privileged intent**
+        const GUILD_MEMBERS = 1 << 1;
+
+        /// Events like bans and audit log entries
+        const GUILD_MODERATION = 1 << 2;
+
+        /// Emoji and sticker updates in guilds
+        const GUILD_EMOJIS_AND_STICKERS = 1 << 3;
+
+        /// Integration-related events
+        const GUILD_INTEGRATIONS = 1 << 4;
+
+        /// Webhook updates
+        const GUILD_WEBHOOKS = 1 << 5;
+
+        /// Invite creation and deletion
+        const GUILD_INVITES = 1 << 6;
+
+        /// Voice state updates
+        const GUILD_VOICE_STATES = 1 << 7;
+
+        /// Presence updates (online/offline status)
+        /// This is a **privileged intent**
+        const GUILD_PRESENCES = 1 << 8;
+
+        /// Messages sent in guilds
+        const GUILD_MESSAGES = 1 << 9;
+
+        /// Reactions to messages in guilds
+        const GUILD_MESSAGE_REACTIONS = 1 << 10;
+
+        /// Typing indicators in guilds
+        const GUILD_MESSAGE_TYPING = 1 << 11;
+
+        /// Direct messages to the bot
+        const DIRECT_MESSAGES = 1 << 12;
+
+        /// Reactions in direct messages
+        const DIRECT_MESSAGE_REACTIONS = 1 << 13;
+
+        /// Typing indicators in direct messages
+        const DIRECT_MESSAGE_TYPING = 1 << 14;
+
+        /// Access to message content
+        /// This is a **privileged intent**
+        const MESSAGE_CONTENT = 1 << 15;
+
+        /// Scheduled events in guilds
+        const GUILD_SCHEDULED_EVENTS = 1 << 16;
+
+        /// Auto moderation rule changes
+        const AUTO_MODERATION_CONFIGURATION = 1 << 20;
+
+        /// Auto moderation actions
+        const AUTO_MODERATION_EXECUTION = 1 << 21;
+
+        /// Poll votes in guild messages
+        const GUILD_MESSAGE_POLLS = 1 << 24;
+
+        /// Poll votes in direct messages
+        const DIRECT_MESSAGE_POLLS = 1 << 25;
+    }
+}
+
+impl GatewayIntents {
+    /// Minimal set of intents required for basic bot functionality:
+    /// receiving guild creation and message events
+    /// Note: GUILD_MESSAGES don't include the content of the message
+    pub fn minimal() -> Self {
+        Self::GUILDS | Self::GUILD_MESSAGES
+    }
+
+    /// Recommended set of intents for bots that interact with messages and reactions
+    pub fn recommended() -> Self {
+        Self::minimal() | Self::GUILD_MESSAGE_REACTIONS
+    }
+
+    /// All available intents, including privileged ones
+    pub fn full() -> Self {
+        Self::all()
+    }
+
+    /// Intents that require manual activation in the Discord Developer Portal
+    pub fn privileged() -> Self {
+        Self::GUILD_MEMBERS | Self::GUILD_PRESENCES | Self::MESSAGE_CONTENT
+    }
+
+    /// Intents that don't require manual activation in the Discord Developer Portal
+    pub fn non_privileged() -> Self {
+        Self::all() - Self::privileged()
+    }
+}
+
+==================== src/gateway/mod.rs ====================
+pub mod ws;
+pub mod heartbeat;
+
+use tokio::sync::{mpsc, watch};
+use tokio_tungstenite::tungstenite::Message;
+
+/// Active Discord Gateway session
+pub struct Gateway {
+    /// Session ID returned in READY
+    pub session_id: String,
+    /// URL for RESUME
+    pub resume_gateway_url: String,
+
+    /// single channel for **sending** frames to the gateway
+    pub writer_tx: mpsc::UnboundedSender<Message>,
+
+    /// channel of **events** (`t` dispatches) already parsed as JSON.
+    /// this is for avoid touching the raw socket.
+    pub events_rx: mpsc::UnboundedReceiver<serde_json::Value>,
+
+    /// signal holding the last observed `s` (sequence) value.
+    pub last_seq_rx: watch::Receiver<Option<i64>>,
+}
+
+==================== src/gateway/heartbeat.rs ====================
+use tokio::sync::{mpsc, watch};
+use tokio::time::{interval, Duration};
+use tokio::select;
+use tokio_tungstenite::tungstenite::Message;
+
+/// Runs the Discord heartbeat loop.
+///
+/// Responsibilities:
+/// - Sends heartbeats at a fixed `interval_ms` (from the Gateway HELLO payload).
+/// - Sends an *immediate* heartbeat if `immediate_rx` receives a signal (op=1 request from Gateway).
+/// - Always includes the latest known sequence number from `last_seq_rx` in the heartbeat payload.
+/// - Listens for a shutdown signal (`shutdown_rx`) and stops gracefully when triggered.
+///
+/// This loop should be spawned in its own task after receiving HELLO, **before** sending IDENTIFY or RESUME.
+/// The Gateway expects heartbeats to start immediately after HELLO, and to continue at the exact interval.
+pub async fn run_heartbeat(
+    writer_tx: mpsc::UnboundedSender<Message>,
+    interval_ms: u64,
+    mut immediate_rx: mpsc::Receiver<()>,
+    last_seq_rx: watch::Receiver<Option<i64>>,
+    mut shutdown_rx: watch::Receiver<bool>,
+) {
+    // A Tokio interval timer that ticks every `interval_ms`.
+    let mut ticker = interval(Duration::from_millis(interval_ms));
+
+    loop {
+        select! {
+            // --- Regular scheduled heartbeat ---
+            _ = ticker.tick() => {
+                let result = send_heartbeat(&writer_tx, last_seq_rx.borrow().clone());
+                println!("[HEARTBEAT] {:?}", result);
+            }
+
+            // --- Immediate heartbeat (Gateway op=1 request) ---
+            maybe_msg = immediate_rx.recv() => {
+                if maybe_msg.is_some() {
+                    let result = send_heartbeat(&writer_tx, last_seq_rx.borrow().clone());
+                    println!("[HEARTBEAT] {:?}", result);
+                }
+            }
+
+            // --- Shutdown signal ---
+            _ = shutdown_rx.changed() => {
+                if *shutdown_rx.borrow() {
+                    // Gracefully exit the heartbeat loop.
+                    println!("[HEARTBEAT] Shutdown signal received — stopping heartbeat task.");
+                    break;
+                }
+            }
+        }
+    }
+}
+
+/// Sends a single heartbeat frame (op=1) to the Gateway.
+///
+/// Arguments:
+/// - `writer_tx`: The sending channel for Gateway messages (owned by the writer task).
+/// - `seq`: The most recent sequence number (`s`) observed from Gateway dispatches.
+///
+/// Notes:
+/// - The payload format is: `{ "op": 1, "d": <seq_or_null> }`.
+/// - Discord requires this `d` value to be the last sequence received, or `null` if none has been received yet.
+/// - This function is synchronous because `mpsc::UnboundedSender::send` is non-blocking.
+pub fn send_heartbeat(
+    writer_tx: &mpsc::UnboundedSender<Message>,
+    seq: Option<i64>,
+) -> anyhow::Result<()> {
+    let heartbeat = serde_json::json!({
+        "op": 1,
+        "d": seq
+    });
+
+    writer_tx.send(Message::Text(heartbeat.to_string().into()))?;
+    Ok(())
+}
+
+==================== src/gateway/ws.rs ====================
+use futures_util::{SinkExt, StreamExt};
+use rustls::{ClientConfig, RootCertStore};
+use std::sync::Arc;
+use tokio::sync::{mpsc, watch};
+use tokio_tungstenite::{connect_async_tls_with_config, Connector, tungstenite::protocol::Message};
+
+use crate::gateway::Gateway;
+use crate::structs::gateway::GatewayIntents;
+
+/// Discord Gateway URL with API version and JSON encoding
+const DISCORD_GATEWAY_URL: &str = "wss://gateway.discord.gg/?v=10&encoding=json";
+
+/// Connects to the Discord Gateway following the correct flow:
+/// 1) Receive HELLO (op=10) and extract `heartbeat_interval`
+/// 2) Start heartbeats
+/// 3) Send IDENTIFY
+/// 4) Read synchronously until READY, then spawn a background reader task
+pub async fn connect(token: &str, intents: GatewayIntents) -> anyhow::Result<Gateway> {
+    println!("connecting to discord gateway");
+
+    // TLS (rustls + webpki roots)
+    let provider = rustls::crypto::ring::default_provider().into();
+    let mut root_store = RootCertStore::empty();
+    root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+
+    let config = ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()?
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
+
+    let connector = Connector::Rustls(Arc::new(config));
+
+    let (ws_stream, _) =
+        connect_async_tls_with_config(DISCORD_GATEWAY_URL, None, true, Some(connector)).await?;
+    println!("connection established");
+
+    let (mut write, mut read) = ws_stream.split();
+
+    // --- Dedicated writer task (single writer) ---
+    let (writer_tx, mut writer_rx) = mpsc::unbounded_channel::<Message>();
+    tokio::spawn(async move {
+        while let Some(msg) = writer_rx.recv().await {
+            if let Err(e) = write.send(msg).await {
+                eprintln!("[writer] send error: {e}");
+                break;
+            }
+        }
+        // writer task exits -> socket will eventually close
+    });
+
+    // --- Helper channels ---
+    let (immediate_tx, immediate_rx) = mpsc::channel::<()>(8);
+    let (last_seq_tx, last_seq_rx) = watch::channel::<Option<i64>>(None);
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
+    // --- 1) Wait for HELLO to get heartbeat_interval ---
+    let heartbeat_interval_ms = loop {
+        let Some(frame) = read.next().await else {
+            anyhow::bail!("gateway closed before HELLO");
+        };
+
+        let Message::Text(text) = frame? else {
+            continue; // ignore binary frames if compression is disabled
+        };
+
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else { continue; };
+
+        if json.get("op").and_then(|v| v.as_i64()) == Some(10) {
+            let interval = json["d"]["heartbeat_interval"]
+                .as_u64()
+                .ok_or_else(|| anyhow::anyhow!("HELLO without heartbeat_interval"))?;
+            println!("received HELLO, heartbeat_interval={interval}ms");
+            break interval;
+        }
+    };
+
+    // --- 2) Start heartbeat task ---
+    tokio::spawn(crate::gateway::heartbeat::run_heartbeat(
+        writer_tx.clone(),
+        heartbeat_interval_ms,
+        immediate_rx,
+        last_seq_rx.clone(),
+        shutdown_rx,
+    ));
+
+    // --- 3) Send IDENTIFY ---
+    let identify = serde_json::json!({
+        "op": 2,
+        "d": {
+            "token": token,
+            "intents": intents.bits(),
+            "properties": {
+                "os": "linux",
+                "browser": "discord-ferris",
+                "device": "discord-ferris"
+            }
+        }
+    });
+    writer_tx
+        .send(Message::Text(identify.to_string().into()))
+        .map_err(|e| anyhow::anyhow!("failed to queue IDENTIFY: {e}"))?;
+    println!("payload op2 (identify) queued");
+
+    // --- Channel for forwarding `t` dispatch events to higher layers ---
+    let (events_tx, events_rx) = mpsc::unbounded_channel::<serde_json::Value>();
+
+    // --- 4) Read synchronously until READY, handling opcodes on the way ---
+    let mut session_id: Option<String> = None;
+    let mut resume_gateway_url: Option<String> = None;
+
+    loop {
+        let Some(msg) = read.next().await else {
+            anyhow::bail!("gateway closed before READY");
+        };
+
+        let Message::Text(text) = msg? else { continue; };
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else { continue; };
+
+        // Update last seq if present
+        if let Some(s) = json.get("s").and_then(|v| v.as_i64()) {
+            let _ = last_seq_tx.send_replace(Some(s));
+        }
+
+        match json.get("op").and_then(|v| v.as_i64()) {
+            Some(0) => {
+                // DISPATCH
+                if let Some(t) = json.get("t").and_then(|v| v.as_str()) {
+                    if t == "READY" {
+                        if let Some(d) = json.get("d") {
+                            if let Some(sid) = d.get("session_id").and_then(|v| v.as_str()) {
+                                session_id = Some(sid.to_string());
+                            }
+                            if let Some(url) = d.get("resume_gateway_url").and_then(|v| v.as_str()) {
+                                resume_gateway_url = Some(url.to_string());
+                            }
+                        }
+                        // Forward READY
+                        let _ = events_tx.send(json);
+                        break; // we have what we need
+                    } else {
+                        // Forward other dispatches while waiting
+                        let _ = events_tx.send(json);
+                    }
+                }
+            }
+            Some(1) => {
+                // HEARTBEAT request
+                let _ = immediate_tx.try_send(());
+            }
+            Some(7) => {
+                eprintln!("[gw] RECONNECT requested (not implemented yet)");
+            }
+            Some(9) => {
+                eprintln!("[gw] INVALID_SESSION: {}", json.get("d").unwrap_or(&serde_json::Value::Null));
+            }
+            Some(11) => {
+                // HEARTBEAT_ACK (i could it for measuring latency in the future)
+            }
+            _ => {}
+        }
+    }
+
+    // Confirm we actually got session details
+    let session_id = session_id.unwrap_or_default();
+    let resume_gateway_url = resume_gateway_url.unwrap_or_else(|| DISCORD_GATEWAY_URL.to_string());
+
+    // --- Spawn background reader for post-READY traffic ---
+    let events_tx_bg = events_tx.clone();
+    let last_seq_tx_bg = last_seq_tx.clone();
+    let immediate_tx_bg = immediate_tx.clone();
+    tokio::spawn(async move {
+        while let Some(msg) = read.next().await {
+            let Ok(Message::Text(text)) = msg else { continue; };
+            let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else { continue; };
+
+            if let Some(s) = json.get("s").and_then(|v| v.as_i64()) {
+                let _ = last_seq_tx_bg.send_replace(Some(s));
+            }
+
+            match json.get("op").and_then(|v| v.as_i64()) {
+                Some(0) => {
+                    let _ = events_tx_bg.send(json);
+                }
+                Some(1) => {
+                    let _ = immediate_tx_bg.try_send(());
+                }
+                Some(7) => {
+                    eprintln!("[gw] RECONNECT requested (not implemented yet)");
+                }
+                Some(9) => {
+                    eprintln!("[gw] INVALID_SESSION: {}", json.get("d").unwrap_or(&serde_json::Value::Null));
+                }
+                Some(11) => {
+                    // HEARTBEAT_ACK
+                }
+                _ => {}
+            }
+        }
+        eprintln!("[reader] stream closed");
+    });
+
+    Ok(Gateway {
+        session_id,
+        resume_gateway_url,
+        writer_tx,
+        events_rx,
+        last_seq_rx,
+    })
+}
+
+pub async fn resume(
+    token: &str,
+    session_id: &str,
+    resume_gateway_url: &str,
+    last_seq: Option<i64>,
+) -> anyhow::Result<Gateway> {
+    println!("resuming gateway session_id={session_id} at {resume_gateway_url}");
+
+    // TLS (rustls + webpki roots)
+    let provider = rustls::crypto::ring::default_provider().into();
+    let mut root_store = RootCertStore::empty();
+    root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+
+    let config = ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()?
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
+
+    let connector = Connector::Rustls(Arc::new(config));
+
+    let (ws_stream, _) =
+        connect_async_tls_with_config(resume_gateway_url, None, true, Some(connector)).await?;
+    println!("reconnected websocket");
+
+    let (mut write, mut read) = ws_stream.split();
+
+    // --- Dedicated writer task (single writer) ---
+    let (writer_tx, mut writer_rx) = mpsc::unbounded_channel::<Message>();
+    tokio::spawn(async move {
+        while let Some(msg) = writer_rx.recv().await {
+            if let Err(e) = write.send(msg).await {
+                eprintln!("[writer] send error: {e}");
+                break;
+            }
+        }
+        // writer task exits -> socket will close
+    });
+
+    // --- Helper channels ---
+    let (immediate_tx, immediate_rx) = mpsc::channel::<()>(8);
+    let (last_seq_tx, last_seq_rx) = watch::channel::<Option<i64>>(None);
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
+    // --- 1) Wait for HELLO to get heartbeat_interval ---
+    let heartbeat_interval_ms = loop {
+        let Some(frame) = read.next().await else {
+            anyhow::bail!("gateway closed before HELLO");
+        };
+
+        let Message::Text(text) = frame? else {
+            continue; // ignore binary frames if compression is disabled
+        };
+
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else { continue; };
+
+        if json.get("op").and_then(|v| v.as_i64()) == Some(10) {
+            let interval = json["d"]["heartbeat_interval"]
+                .as_u64()
+                .ok_or_else(|| anyhow::anyhow!("HELLO without heartbeat_interval"))?;
+            println!("received HELLO, heartbeat_interval={interval}ms");
+            break interval;
+        }
+    };
+
+    // --- 2) Start heartbeat task ---
+    tokio::spawn(crate::gateway::heartbeat::run_heartbeat(
+        writer_tx.clone(),
+        heartbeat_interval_ms,
+        immediate_rx,
+        last_seq_rx.clone(),
+        shutdown_rx,
+    ));
+
+    // --- 3) Send RESUME ---
+    let resume = serde_json::json!({
+        "op": 6,
+        "d": {
+            "token": token,
+            "session_id": session_id,
+            "seq": last_seq,
+        }
+    });
+    writer_tx
+        .send(Message::Text(resume.to_string().into()))
+        .map_err(|e| anyhow::anyhow!("failed to queue RESUME: {e}"))?;
+    println!("payload op6 (resume) queued with seq={last_seq:?}");
+
+    // --- Channel for forwarding `t` dispatch events to higher layers ---
+    let (events_tx, events_rx) = mpsc::unbounded_channel::<serde_json::Value>();
+
+    // --- 4) Read synchronously until RESUME, handling opcodes on the way ---
+    loop {
+        let Some(msg) = read.next().await else {
+            anyhow::bail!("gateway closed before RESUME");
+        };
+        let Message::Text(text) = msg? else { continue; };
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else { continue; };
+
+        // Update last seq if present
+        if let Some(s) = json.get("s").and_then(|v| v.as_i64()) {
+            let _ = last_seq_tx.send_replace(Some(s));
+        }
+
+        match json.get("op").and_then(|v| v.as_i64()) {
+            Some(0) => {
+                // DISPATCH
+                if let Some(t) = json.get("t").and_then(|v| v.as_str()) {
+                    if t == "RESUMED" {
+                        // Forward 
+                        let _ = events_tx.send(json);
+                        break;
+                    } else {
+                        // Forward other dispatches while waiting
+                        let _ = events_tx.send(json);
+                    }
+                }
+            }
+            Some(1) => {
+                // HEARTBEAT request
+                let _ = immediate_tx.try_send(());
+            }
+            Some(7) => {
+                eprintln!("[gw] RECONNECT requested during RESUME");
+            }
+            Some(9) => {
+                eprintln!("[gw] INVALID_SESSION during RESUME: {}", json.get("d").unwrap_or(&serde_json::Value::Null));
+            }
+            Some(11) => {
+                // HEARTBEAT_ACK (i could use it for measuring latency in the future)
+            }
+            _ => {}
+        }
+    }
+
+    // --- Spawn background reader after RESUME ---
+    let events_tx_bg = events_tx.clone();
+    let last_seq_tx_bg = last_seq_tx.clone();
+    let immediate_tx_bg = immediate_tx.clone();
+    tokio::spawn(async move {
+        while let Some(msg) = read.next().await {
+            let Ok(Message::Text(text)) = msg else { continue; };
+            let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else { continue; };
+
+            if let Some(s) = json.get("s").and_then(|v| v.as_i64()) {
+                let _ = last_seq_tx_bg.send_replace(Some(s));
+            }
+
+            match json.get("op").and_then(|v| v.as_i64()) {
+                Some(0) => {
+                    let _ = events_tx_bg.send(json);
+                }
+                Some(1) => {
+                    let _ = immediate_tx_bg.try_send(());
+                }
+                Some(7) => {
+                    eprintln!("[gw] RECONNECT requested");
+                }
+                Some(9) => {
+                    eprintln!("[gw] INVALID_SESSION: {}", json.get("d").unwrap_or(&serde_json::Value::Null));
+                }
+                Some(11) => {
+                    // HEARTBEAT_ACK
+                }
+                _ => {}
+            }
+        }
+        eprintln!("[reader] stream closed");
+    });
+
+    Ok(Gateway {
+        session_id: session_id.to_string(),
+        resume_gateway_url: resume_gateway_url.to_string(),
+        writer_tx,
+        events_rx,
+        last_seq_rx,
+    })
+}
+==================== src/lib.rs ====================
+pub mod client;
+pub mod gateway;
+pub mod structs;
