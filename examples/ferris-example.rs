@@ -13,7 +13,6 @@ async fn main() -> anyhow::Result<()> {
     let token = std::env::var("DISCORD_TOKEN").expect("Missing token");
     let mut client = Client::new(token, GatewayIntents::non_privileged());
     client.login().await?;
-    println!("ESTO NO SE DEBERIA EJECUTAR");
     Ok(())
 }
 

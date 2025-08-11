@@ -57,7 +57,7 @@ impl Client {
                                 crate::log_evt!("{}", t);
                             }
                         }
-                        None => {
+                        _none => {
                             // The reader task ended: the connection is closed.
                             log_warn!("events_rx closed — attempting reconnection…");
 
@@ -68,7 +68,6 @@ impl Client {
                             let session_id = old_gw.session_id.clone();
                             let resume_url = old_gw.resume_gateway_url.clone();
                             let last_seq = old_gw.last_seq_rx.borrow().clone();
-                            // `old_gw` is dropped here — its Drop sends shutdown to background tasks.
 
                             // Exponential backoff for repeated failures.
                             let mut delay = std::time::Duration::from_secs(1);
@@ -123,7 +122,7 @@ impl Client {
 
                 // --- Shutdown signal (Ctrl+C) ---
                 _ = tokio::signal::ctrl_c() => {
-                    log_cli!("\nCtrl+C received — shutting down.");
+                    log_cli!("Ctrl+C received — shutting down.");
                     if let Some(gw) = self.gateway.as_ref() {
                         use tokio_tungstenite::tungstenite::protocol::{CloseFrame, frame::coding::CloseCode};
                         use tokio_tungstenite::tungstenite::Message;
