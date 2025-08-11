@@ -6,7 +6,7 @@ use tokio_tungstenite::{connect_async_tls_with_config, Connector, tungstenite::p
 
 use crate::gateway::Gateway;
 use crate::structs::gateway::GatewayIntents;
-use crate::{log_err, log_evt, log_gw, log_hb, log_ok, log_warn};
+use crate::{log};
 
 /// Discord Gateway URL with API version and JSON encoding.
 const DISCORD_GATEWAY_URL: &str = "wss://gateway.discord.gg/?v=10&encoding=json";
@@ -31,7 +31,7 @@ pub enum ResumeError {
 ///
 /// Returns a `Gateway` with channels for writing frames and receiving dispatch events.
 pub async fn connect(token: &str, intents: GatewayIntents) -> anyhow::Result<Gateway> {
-    log_gw!("connecting to discord gateway");
+    log!("GW", "connecting to discord gateway");
 
     // --- TLS (rustls + webpki roots) ---
     let provider = rustls::crypto::ring::default_provider().into();
@@ -48,7 +48,7 @@ pub async fn connect(token: &str, intents: GatewayIntents) -> anyhow::Result<Gat
     // --- Open WebSocket ---
     let (ws_stream, _) =
         connect_async_tls_with_config(DISCORD_GATEWAY_URL, None, true, Some(connector)).await?;
-    log_ok!("connection established");
+    log!("OK", "connection established");
 
     let (mut write, mut read) = ws_stream.split();
 
@@ -57,7 +57,7 @@ pub async fn connect(token: &str, intents: GatewayIntents) -> anyhow::Result<Gat
     tokio::spawn(async move {
         while let Some(msg) = writer_rx.recv().await {
             if let Err(e) = write.send(msg).await {
-                log_err!("[writer] send error: {e}");
+                log!("ERR", "[writer] send error: {e}");
                 break;
             }
         }
@@ -86,7 +86,7 @@ pub async fn connect(token: &str, intents: GatewayIntents) -> anyhow::Result<Gat
             let interval = json["d"]["heartbeat_interval"]
                 .as_u64()
                 .ok_or_else(|| anyhow::anyhow!("HELLO without heartbeat_interval"))?;
-            log_ok!("received HELLO, heartbeat_interval={interval}ms");
+            log!("OK", "received HELLO, heartbeat_interval={interval}ms");
             break interval;
         }
     };
@@ -99,21 +99,21 @@ pub async fn connect(token: &str, intents: GatewayIntents) -> anyhow::Result<Gat
         last_seq_rx.clone(),
         shutdown_rx,
     ));
-    log_hb!("heartbeat task started");
+    log!("HB", "heartbeat task started");
 
     // --- 3) Send IDENTIFY ---
     let identify = serde_json::json!({
         "op": 2,
         "d": {
             "token": token,
-            "intents": intents.bits(),
+            "intents": intents.0,
             "properties": { "os": "linux", "browser": "discord-ferris", "device": "discord-ferris" }
         }
     });
     writer_tx
         .send(Message::Text(identify.to_string().into()))
         .map_err(|e| anyhow::anyhow!("failed to queue IDENTIFY: {e}"))?;
-    log_gw!("payload op2 (identify) queued");
+    log!("GW", "payload op2 (identify) queued");
 
     // --- Event channel for higher layers ---
     let (events_tx, events_rx) = mpsc::unbounded_channel::<serde_json::Value>();
@@ -149,11 +149,11 @@ pub async fn connect(token: &str, intents: GatewayIntents) -> anyhow::Result<Gat
                                 resume_gateway_url = Some(url.to_string());
                             }
                         }
-                        log_evt!("READY");
+                        log!("EVT", "READY");
                         let _ = events_tx.send(json);
                         break;
                     } else {
-                        log_evt!("{}", t);
+                        log!("EVT", "{}", t);
                         let _ = events_tx.send(json);
                     }
                 }
@@ -163,10 +163,10 @@ pub async fn connect(token: &str, intents: GatewayIntents) -> anyhow::Result<Gat
                 let _ = immediate_tx.try_send(());
             }
             Some(7) => {
-                log_warn!("[gw] RECONNECT requested (will be handled by client if the connection drops)");
+                log!("WARN", "[gw] RECONNECT requested (will be handled by client if the connection drops)");
             }
             Some(9) => {
-                log_warn!("[gw] INVALID_SESSION: {}", json.get("d").unwrap_or(&serde_json::Value::Null));
+                log!("WARN", "[gw] INVALID_SESSION: {}", json.get("d").unwrap_or(&serde_json::Value::Null));
             }
             Some(11) => { /* HEARTBEAT_ACK — could be used to track latency. */ }
             _ => {}
@@ -192,13 +192,13 @@ pub async fn connect(token: &str, intents: GatewayIntents) -> anyhow::Result<Gat
             match json.get("op").and_then(|v| v.as_i64()) {
                 Some(0) => { let _ = events_tx_bg.send(json); }
                 Some(1) => { let _ = immediate_tx_bg.try_send(()); }
-                Some(7) => { log_warn!("[gw] RECONNECT requested"); }
-                Some(9) => { log_warn!("[gw] INVALID_SESSION: {}", json.get("d").unwrap_or(&serde_json::Value::Null)); }
+                Some(7) => { log!("WARN", "[gw] RECONNECT requested"); }
+                Some(9) => { log!("WARN", "[gw] INVALID_SESSION: {}", json.get("d").unwrap_or(&serde_json::Value::Null)); }
                 Some(11) => { /* HEARTBEAT_ACK */ }
                 _ => {}
             }
         }
-        log_warn!("[reader] stream closed");
+        log!("WARN", "[reader] stream closed");
     });
 
     Ok(Gateway {
@@ -220,7 +220,7 @@ pub async fn resume(
     resume_gateway_url: &str,
     last_seq: Option<i64>,
 ) -> Result<Gateway, ResumeError> {
-    log_gw!("resuming session_id={} at {}", session_id, resume_gateway_url);
+    log!("GW", "resuming session_id={} at {}", session_id, resume_gateway_url);
 
     // --- TLS (rustls + webpki roots) ---
     let provider = rustls::crypto::ring::default_provider().into();
@@ -241,7 +241,7 @@ pub async fn resume(
         connect_async_tls_with_config(resume_url, None, true, Some(connector))
             .await
             .map_err(|e| ResumeError::Transport(anyhow::anyhow!(e)))?;
-    log_ok!("reconnected websocket");
+    log!("OK", "reconnected websocket");
 
     let (mut write, mut read) = ws_stream.split();
 
@@ -250,7 +250,7 @@ pub async fn resume(
     tokio::spawn(async move {
         while let Some(msg) = writer_rx.recv().await {
             if let Err(e) = write.send(msg).await {
-                log_err!("[writer] send error: {e}");
+                log!("ERR", "[writer] send error: {e}");
                 break;
             }
         }
@@ -278,7 +278,7 @@ pub async fn resume(
             let Some(interval) = json["d"]["heartbeat_interval"].as_u64() else {
                 return Err(ResumeError::Transport(anyhow::anyhow!("HELLO without heartbeat_interval")));
             };
-            log_ok!("received HELLO (resume), heartbeat_interval={interval}ms");
+            log!("OK", "received HELLO (resume), heartbeat_interval={interval}ms");
             break interval;
         }
     };
@@ -291,7 +291,7 @@ pub async fn resume(
         last_seq_rx.clone(),
         shutdown_rx,
     ));
-    log_hb!("heartbeat task started (resume)");
+    log!("HB", "heartbeat task started (resume)");
 
     // --- 3) Send RESUME ---
     let resume_payload = serde_json::json!({
@@ -301,7 +301,7 @@ pub async fn resume(
     writer_tx
         .send(Message::Text(resume_payload.to_string().into()))
         .map_err(|e| ResumeError::Transport(anyhow::anyhow!("failed to queue RESUME: {e}")))?;
-    log_gw!("payload op6 (resume) queued with seq={last_seq:?}");
+    log!("GW", "payload op6 (resume) queued with seq={last_seq:?}");
 
     // --- Event channel for higher layers ---
     let (events_tx, events_rx) = mpsc::unbounded_channel::<serde_json::Value>();
@@ -323,20 +323,20 @@ pub async fn resume(
             Some(0) => {
                 if let Some(t) = json.get("t").and_then(|v| v.as_str()) {
                     if t == "RESUMED" {
-                        log_evt!("RESUMED");
+                        log!("EVT", "RESUMED");
                         let _ = events_tx.send(json);
                         break;
                     } else {
-                        log_evt!("{}", t);
+                        log!("EVT", "{}", t);
                         let _ = events_tx.send(json);
                     }
                 }
             }
             Some(1) => { let _ = immediate_tx.try_send(()); } // HEARTBEAT request
-            Some(7) => { log_warn!("[gw] RECONNECT requested during RESUME"); }
+            Some(7) => { log!("WARN", "[gw] RECONNECT requested during RESUME"); }
             Some(9) => {
                 let resumable = json.get("d").and_then(|v| v.as_bool()).unwrap_or(false);
-                log_warn!("[gw] INVALID_SESSION during RESUME: {resumable}");
+                log!("WARN", "[gw] INVALID_SESSION during RESUME: {resumable}");
                 let _ = shutdown_tx.send(true);
                 return Err(ResumeError::InvalidSession { resumable });
             }
@@ -361,13 +361,13 @@ pub async fn resume(
             match json.get("op").and_then(|v| v.as_i64()) {
                 Some(0) => { let _ = events_tx_bg.send(json); }
                 Some(1) => { let _ = immediate_tx_bg.try_send(()); }
-                Some(7) => { log_warn!("[gw] RECONNECT requested"); }
-                Some(9) => { log_warn!("[gw] INVALID_SESSION during running"); }
+                Some(7) => { log!("WARN", "[gw] RECONNECT requested"); }
+                Some(9) => { log!("WARN", "[gw] INVALID_SESSION during running"); }
                 Some(11) => { /* HEARTBEAT_ACK */ }
                 _ => {}
             }
         }
-        log_warn!("[reader] stream closed (resumed)");
+        log!("WARN", "[reader] stream closed (resumed)");
     });
 
     Ok(Gateway {
