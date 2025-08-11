@@ -2,7 +2,7 @@ use tokio::sync::{mpsc, watch};
 use tokio::time::{interval, Duration};
 use tokio::select;
 use tokio_tungstenite::tungstenite::Message;
-use crate::log_hb;
+use crate::log;
 
 /// Runs the Discord heartbeat loop.
 ///
@@ -29,14 +29,14 @@ pub async fn run_heartbeat(
             // --- Regular scheduled heartbeat ---
             _ = ticker.tick() => {
                 let result = send_heartbeat(&writer_tx, last_seq_rx.borrow().clone());
-                log_hb!("{:?}", result);
+                log!("HB", "{:?}", result);
             }
 
             // --- Immediate heartbeat (Gateway op=1 request) ---
             maybe_msg = immediate_rx.recv() => {
                 if maybe_msg.is_some() {
                     let result = send_heartbeat(&writer_tx, last_seq_rx.borrow().clone());
-                    log_hb!("{:?}", result);
+                    log!("HB", "{:?}", result);
                 }
             }
 
@@ -44,7 +44,7 @@ pub async fn run_heartbeat(
             _ = shutdown_rx.changed() => {
                 if *shutdown_rx.borrow() {
                     // Gracefully exit the heartbeat loop.
-                    log_hb!("Shutdown signal received — stopping heartbeat task.");
+                    log!("HB", "Shutdown signal received — stopping heartbeat task.");
                     break;
                 }
             }
