@@ -16,7 +16,6 @@ default = []
 examples = ["dotenvy"]
 
 [dependencies]
-reqwest = "0.12.22"
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = { version = "0.27.0", features = ["__rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
@@ -26,8 +25,6 @@ anyhow = "1.0.98"
 rustls = { version= "0.23.31", features = ["ring"] }
 webpki-roots = "1.0.2"
 dotenvy = { version = "0.15", optional = true }
-bitflags = "2.9.1"
 thiserror = "2.0.12"
 atty = "0.2.14"
 time = { version = "0.3.41", features = ["formatting", "local-offset", "macros"]}
-time-tz = "0.6.0"
