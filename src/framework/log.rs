@@ -70,7 +70,12 @@ pub fn print_kind(kind: LogKind, color_code: &str, msg: String, is_err: bool) {
         Stream::Stdout
     });
     let k = colorize(kind, color_code, use_color);
-    let ts = format!("[{}]", timestamp_str());
+    let ts = format!(
+        "{}[{}]{}",
+        colors::DARK_GRAY,
+        timestamp_str(),
+        colors::RESET
+    );
     if is_err {
         eprintln!("{ts} {k} {msg}");
     } else {
