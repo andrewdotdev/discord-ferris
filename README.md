@@ -19,7 +19,7 @@ discord-ferris is a Discord API Rust library under development
 The `ferris-example` is a temporary development entry point and **will be removed in future versions** to keep the framework clean and focused.
 
 > [!IMPORTANT]
-> You need **Rust 1.85.1 or higher** to run this example. Also, replace `your_bot_token` with your actual discord bot token
+> You need **Rust 1.85.1 or higher** to run this example. Also, copy `.env.example` to `.env`and replace `your_bot_token` with your actual discord bot token
 
 ```bash
 cargo run --example ferris-example --features examples

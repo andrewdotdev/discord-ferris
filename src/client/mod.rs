@@ -1,17 +1,20 @@
+use crate::framework::log::Log;
 use crate::gateway::{self, Gateway};
+use crate::log;
 use crate::structs::gateway::GatewayIntents;
-use crate::{log};
 
 #[inline]
 fn custom_prng(min: u64, max: u64) -> u64 {
     // lcg seeded from current time
     use std::time::{SystemTime, UNIX_EPOCH};
-    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().subsec_nanos() as u64;
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .subsec_nanos() as u64;
     let mut state = nanos ^ 0x5DEECE66D;
     state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
     min + (state % (max - min + 1))
 }
-
 
 /// Represents the state of the Client (authenticated or not).
 enum ClientState {
@@ -25,11 +28,11 @@ pub struct Client {
     intents: GatewayIntents,
     state: ClientState,
     gateway: Option<Gateway>,
+    #[allow(dead_code)]
+    log: Log,
 }
 
 impl Client {
-
-
     /// Creates the client (starts unauthenticated)
     pub fn new(token: impl Into<String>, intents: GatewayIntents) -> Self {
         Self {
@@ -37,6 +40,7 @@ impl Client {
             intents,
             state: ClientState::Unauthenticated,
             gateway: None,
+            log: Log,
         }
     }
 
@@ -50,7 +54,11 @@ impl Client {
         // Initial connection (IDENTIFY).
         let gateway = gateway::ws::connect(&self.token, self.intents).await?;
         self.state = ClientState::Authenticated;
-        log!("OK", "Client authenticated (session_id={})", gateway.session_id);
+        log!(
+            "OK",
+            "Client authenticated (session_id={})",
+            gateway.session_id
+        );
         self.gateway = Some(gateway);
 
         log!("CLI", "Client is running. use Ctrl+C to exit.");

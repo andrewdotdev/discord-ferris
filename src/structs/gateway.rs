@@ -70,7 +70,9 @@ impl GatewayIntents {
     }
 
     pub const fn privileged() -> Self {
-        Self::GUILD_MEMBERS.union(Self::GUILD_PRESENCES).union(Self::MESSAGE_CONTENT)
+        Self::GUILD_MEMBERS
+            .union(Self::GUILD_PRESENCES)
+            .union(Self::MESSAGE_CONTENT)
     }
 
     pub const fn non_privileged() -> Self {

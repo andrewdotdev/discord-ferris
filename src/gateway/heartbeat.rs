@@ -1,8 +1,8 @@
-use tokio::sync::{mpsc, watch};
-use tokio::time::{interval, Duration};
-use tokio::select;
-use tokio_tungstenite::tungstenite::Message;
 use crate::log;
+use tokio::select;
+use tokio::sync::{mpsc, watch};
+use tokio::time::{Duration, interval};
+use tokio_tungstenite::tungstenite::Message;
 
 /// Runs the Discord heartbeat loop.
 ///

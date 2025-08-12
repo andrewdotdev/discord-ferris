@@ -1,5 +1,5 @@
-pub mod ws;
 pub mod heartbeat;
+pub mod ws;
 
 use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::tungstenite::Message;

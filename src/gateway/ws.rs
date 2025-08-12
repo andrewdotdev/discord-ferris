@@ -2,11 +2,11 @@ use futures_util::{SinkExt, StreamExt};
 use rustls::{ClientConfig, RootCertStore};
 use std::sync::Arc;
 use tokio::sync::{mpsc, watch};
-use tokio_tungstenite::{connect_async_tls_with_config, Connector, tungstenite::protocol::Message};
+use tokio_tungstenite::{Connector, connect_async_tls_with_config, tungstenite::protocol::Message};
 
 use crate::gateway::Gateway;
+use crate::log;
 use crate::structs::gateway::GatewayIntents;
-use crate::{log};
 
 /// Discord Gateway URL with API version and JSON encoding.
 const DISCORD_GATEWAY_URL: &str = "wss://gateway.discord.gg/?v=10&encoding=json";
@@ -80,7 +80,9 @@ pub async fn connect(token: &str, intents: GatewayIntents) -> anyhow::Result<Gat
             continue; // Ignore binary frames while compression is disabled.
         };
 
-        let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else { continue; };
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else {
+            continue;
+        };
 
         if json.get("op").and_then(|v| v.as_i64()) == Some(10) {
             let interval = json["d"]["heartbeat_interval"]
@@ -128,8 +130,12 @@ pub async fn connect(token: &str, intents: GatewayIntents) -> anyhow::Result<Gat
             anyhow::bail!("gateway closed before READY");
         };
 
-        let Message::Text(text) = msg? else { continue; };
-        let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else { continue; };
+        let Message::Text(text) = msg? else {
+            continue;
+        };
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else {
+            continue;
+        };
 
         // Track the last sequence number (for heartbeats and RESUME).
         if let Some(s) = json.get("s").and_then(|v| v.as_i64()) {
@@ -145,7 +151,8 @@ pub async fn connect(token: &str, intents: GatewayIntents) -> anyhow::Result<Gat
                             if let Some(sid) = d.get("session_id").and_then(|v| v.as_str()) {
                                 session_id = Some(sid.to_string());
                             }
-                            if let Some(url) = d.get("resume_gateway_url").and_then(|v| v.as_str()) {
+                            if let Some(url) = d.get("resume_gateway_url").and_then(|v| v.as_str())
+                            {
                                 resume_gateway_url = Some(url.to_string());
                             }
                         }
@@ -163,10 +170,17 @@ pub async fn connect(token: &str, intents: GatewayIntents) -> anyhow::Result<Gat
                 let _ = immediate_tx.try_send(());
             }
             Some(7) => {
-                log!("WARN", "[gw] RECONNECT requested (will be handled by client if the connection drops)");
+                log!(
+                    "WARN",
+                    "[gw] RECONNECT requested (will be handled by client if the connection drops)"
+                );
             }
             Some(9) => {
-                log!("WARN", "[gw] INVALID_SESSION: {}", json.get("d").unwrap_or(&serde_json::Value::Null));
+                log!(
+                    "WARN",
+                    "[gw] INVALID_SESSION: {}",
+                    json.get("d").unwrap_or(&serde_json::Value::Null)
+                );
             }
             Some(11) => { /* HEARTBEAT_ACK — could be used to track latency. */ }
             _ => {}
@@ -182,18 +196,34 @@ pub async fn connect(token: &str, intents: GatewayIntents) -> anyhow::Result<Gat
     let immediate_tx_bg = immediate_tx.clone();
     tokio::spawn(async move {
         while let Some(msg) = read.next().await {
-            let Ok(Message::Text(text)) = msg else { continue; };
-            let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else { continue; };
+            let Ok(Message::Text(text)) = msg else {
+                continue;
+            };
+            let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else {
+                continue;
+            };
 
             if let Some(s) = json.get("s").and_then(|v| v.as_i64()) {
                 let _ = last_seq_tx_bg.send_replace(Some(s));
             }
 
             match json.get("op").and_then(|v| v.as_i64()) {
-                Some(0) => { let _ = events_tx_bg.send(json); }
-                Some(1) => { let _ = immediate_tx_bg.try_send(()); }
-                Some(7) => { log!("WARN", "[gw] RECONNECT requested"); }
-                Some(9) => { log!("WARN", "[gw] INVALID_SESSION: {}", json.get("d").unwrap_or(&serde_json::Value::Null)); }
+                Some(0) => {
+                    let _ = events_tx_bg.send(json);
+                }
+                Some(1) => {
+                    let _ = immediate_tx_bg.try_send(());
+                }
+                Some(7) => {
+                    log!("WARN", "[gw] RECONNECT requested");
+                }
+                Some(9) => {
+                    log!(
+                        "WARN",
+                        "[gw] INVALID_SESSION: {}",
+                        json.get("d").unwrap_or(&serde_json::Value::Null)
+                    );
+                }
                 Some(11) => { /* HEARTBEAT_ACK */ }
                 _ => {}
             }
@@ -220,7 +250,12 @@ pub async fn resume(
     resume_gateway_url: &str,
     last_seq: Option<i64>,
 ) -> Result<Gateway, ResumeError> {
-    log!("GW", "resuming session_id={} at {}", session_id, resume_gateway_url);
+    log!(
+        "GW",
+        "resuming session_id={} at {}",
+        session_id,
+        resume_gateway_url
+    );
 
     // --- TLS (rustls + webpki roots) ---
     let provider = rustls::crypto::ring::default_provider().into();
@@ -237,10 +272,9 @@ pub async fn resume(
 
     // --- Open WebSocket ---
     let resume_url = normalize_gateway_url(resume_gateway_url);
-    let (ws_stream, _) =
-        connect_async_tls_with_config(resume_url, None, true, Some(connector))
-            .await
-            .map_err(|e| ResumeError::Transport(anyhow::anyhow!(e)))?;
+    let (ws_stream, _) = connect_async_tls_with_config(resume_url, None, true, Some(connector))
+        .await
+        .map_err(|e| ResumeError::Transport(anyhow::anyhow!(e)))?;
     log!("OK", "reconnected websocket");
 
     let (mut write, mut read) = ws_stream.split();
@@ -265,20 +299,30 @@ pub async fn resume(
     let heartbeat_interval_ms = loop {
         let Some(frame) = read.next().await else {
             let _ = shutdown_tx.send(true);
-            return Err(ResumeError::Transport(anyhow::anyhow!("gateway closed before HELLO (resume)")));
+            return Err(ResumeError::Transport(anyhow::anyhow!(
+                "gateway closed before HELLO (resume)"
+            )));
         };
 
-        let Message::Text(text) = frame.map_err(|e| ResumeError::Transport(anyhow::anyhow!(e)))? else {
+        let Message::Text(text) = frame.map_err(|e| ResumeError::Transport(anyhow::anyhow!(e)))?
+        else {
             continue;
         };
 
-        let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else { continue; };
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else {
+            continue;
+        };
 
         if json.get("op").and_then(|v| v.as_i64()) == Some(10) {
             let Some(interval) = json["d"]["heartbeat_interval"].as_u64() else {
-                return Err(ResumeError::Transport(anyhow::anyhow!("HELLO without heartbeat_interval")));
+                return Err(ResumeError::Transport(anyhow::anyhow!(
+                    "HELLO without heartbeat_interval"
+                )));
             };
-            log!("OK", "received HELLO (resume), heartbeat_interval={interval}ms");
+            log!(
+                "OK",
+                "received HELLO (resume), heartbeat_interval={interval}ms"
+            );
             break interval;
         }
     };
@@ -310,10 +354,17 @@ pub async fn resume(
     loop {
         let Some(msg) = read.next().await else {
             let _ = shutdown_tx.send(true);
-            return Err(ResumeError::Transport(anyhow::anyhow!("gateway closed before RESUMED")));
+            return Err(ResumeError::Transport(anyhow::anyhow!(
+                "gateway closed before RESUMED"
+            )));
         };
-        let Message::Text(text) = msg.map_err(|e| ResumeError::Transport(anyhow::anyhow!(e)))? else { continue; };
-        let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else { continue; };
+        let Message::Text(text) = msg.map_err(|e| ResumeError::Transport(anyhow::anyhow!(e)))?
+        else {
+            continue;
+        };
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else {
+            continue;
+        };
 
         if let Some(s) = json.get("s").and_then(|v| v.as_i64()) {
             let _ = last_seq_tx.send_replace(Some(s));
@@ -332,8 +383,12 @@ pub async fn resume(
                     }
                 }
             }
-            Some(1) => { let _ = immediate_tx.try_send(()); } // HEARTBEAT request
-            Some(7) => { log!("WARN", "[gw] RECONNECT requested during RESUME"); }
+            Some(1) => {
+                let _ = immediate_tx.try_send(());
+            } // HEARTBEAT request
+            Some(7) => {
+                log!("WARN", "[gw] RECONNECT requested during RESUME");
+            }
             Some(9) => {
                 let resumable = json.get("d").and_then(|v| v.as_bool()).unwrap_or(false);
                 log!("WARN", "[gw] INVALID_SESSION during RESUME: {resumable}");
@@ -351,18 +406,30 @@ pub async fn resume(
     let immediate_tx_bg = immediate_tx.clone();
     tokio::spawn(async move {
         while let Some(msg) = read.next().await {
-            let Ok(Message::Text(text)) = msg else { continue; };
-            let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else { continue; };
+            let Ok(Message::Text(text)) = msg else {
+                continue;
+            };
+            let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else {
+                continue;
+            };
 
             if let Some(s) = json.get("s").and_then(|v| v.as_i64()) {
                 let _ = last_seq_tx_bg.send_replace(Some(s));
             }
 
             match json.get("op").and_then(|v| v.as_i64()) {
-                Some(0) => { let _ = events_tx_bg.send(json); }
-                Some(1) => { let _ = immediate_tx_bg.try_send(()); }
-                Some(7) => { log!("WARN", "[gw] RECONNECT requested"); }
-                Some(9) => { log!("WARN", "[gw] INVALID_SESSION during running"); }
+                Some(0) => {
+                    let _ = events_tx_bg.send(json);
+                }
+                Some(1) => {
+                    let _ = immediate_tx_bg.try_send(());
+                }
+                Some(7) => {
+                    log!("WARN", "[gw] RECONNECT requested");
+                }
+                Some(9) => {
+                    log!("WARN", "[gw] INVALID_SESSION during running");
+                }
                 Some(11) => { /* HEARTBEAT_ACK */ }
                 _ => {}
             }
