@@ -1,5 +1,3 @@
 /target
 .env
-/.vscode
-fulldump.txt
 Cargo.lock
