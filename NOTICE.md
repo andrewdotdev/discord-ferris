@@ -1,12 +1,10 @@
 # NOTICE
 
-This project includes code originally published under the MIT license:
+This project includes code originally published under the **MIT license**:
 
 - TypeScript types from: https://github.com/discordjs/discord-api-types
   Licensed under the MIT License.
   © vladfrangu.
-
-This project includes code originally published under the **MIT license**:
 
 These types were ported to Rust by © andrewdotdev.  
 The Rust adaptation retains the original MIT License and includes full attribution.
