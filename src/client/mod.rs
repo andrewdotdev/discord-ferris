@@ -1,7 +1,17 @@
+use std::sync::Arc;
+
+use serde::de::DeserializeOwned;
+
 use crate::framework::log::Log;
 use crate::gateway::{self, Gateway};
+use crate::http::Http;
 use crate::log;
-use crate::structs::gateway::GatewayIntents;
+
+use crate::core::codec::{DispatchEnvelope, decode}; // decode must return Option<GatewayDispatch<Value>>
+use crate::framework::context::{Context, Ctx};
+use crate::framework::router::Router;
+
+use crate::models::gateway::{GatewayDispatchEvents as GwEvt, GatewayIntents};
 
 #[inline]
 fn custom_prng(min: u64, max: u64) -> u64 {
@@ -30,29 +40,78 @@ pub struct Client {
     gateway: Option<Gateway>,
     #[allow(dead_code)]
     log: Log,
+
+    router: Router,
+    ctx: Arc<Context>,
 }
 
 impl Client {
     /// Creates the client (starts unauthenticated)
     pub fn new(token: impl Into<String>, intents: GatewayIntents) -> Self {
+        let token = token.into();
+
+        let mut router = Router::new();
+
+        // Log every event name using the new Ctx.
+        router.on_all(|c| async move {
+            if let Some(t) = c.event_name() {
+                crate::log!("EVT", "{:?}", t);
+            } else {
+                crate::log!("EVT", "Unknown");
+            }
+        });
+
+        // HTTP + Context
+        let http = Arc::new(Http::new(&token));
+        let ctx = Arc::new(Context::new(Arc::clone(&http)));
+
         Self {
-            token: token.into(),
+            token,
             intents,
             state: ClientState::Unauthenticated,
             gateway: None,
             log: Log,
+            router,
+            ctx,
         }
     }
 
-    /// Connects to Discord's Gateway, starts heartbeating, sends IDENTIFY,
-    /// waits for READY, and then **keeps the client alive** until either:
-    /// - The Gateway connection closes (then it will attempt RESUME or re-IDENTIFY).
-    /// - The process receives Ctrl+C (SIGINT).
-    ///
-    /// This method will not return until the client shuts down.
+    /// Persistent handler: closure receives (Ctx, T)
+    pub fn on<T, F, Fut>(&mut self, kind: GwEvt, handler: F) -> &mut Self
+    where
+        T: DeserializeOwned + Send + Sync + 'static,
+        F: Send + Sync + 'static + Fn(Ctx, T) -> Fut,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        self.router.on::<T, F, Fut>(kind, handler);
+        self
+    }
+
+    /// One-shot handler: closure receives (Ctx, T)
+    pub fn once<T, F, Fut>(&mut self, kind: GwEvt, handler: F) -> &mut Self
+    where
+        T: DeserializeOwned + Send + Sync + 'static,
+        F: Send + Sync + 'static + Fn(Ctx, T) -> Fut,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        self.router.once::<T, F, Fut>(kind, handler);
+        self
+    }
+
+    /// Register a handler for all events.
+    pub fn on_all<F, Fut>(&mut self, handler: F) -> &mut Self
+    where
+        F: Send + Sync + 'static + Fn(Ctx) -> Fut,
+        Fut: std::future::Future<Output = ()> + Send + 'static,
+    {
+        self.router.on_all(handler);
+        self
+    }
+
+    /// Connect, IDENTIFY, keep alive, and handle RESUME/reconnects.
     pub async fn login(&mut self) -> anyhow::Result<()> {
         // Initial connection (IDENTIFY).
-        let gateway = gateway::ws::connect(&self.token, self.intents).await?;
+        let gateway = gateway::ws::connect(&self.token, self.intents.clone()).await?;
         self.state = ClientState::Authenticated;
         log!(
             "OK",
@@ -71,9 +130,13 @@ impl Client {
                 // --- Incoming Gateway event ---
                 maybe_evt = gw.events_rx.recv() => {
                     match maybe_evt {
-                        Some(evt) => {
-                            if let Some(t) = evt.get("t").and_then(|v| v.as_str()) {
-                                log!("EVT", "{}", t);
+                        Some(evt_json) => {
+                            if let Ok(env) = serde_json::from_value::<DispatchEnvelope>(evt_json) {
+                                // IMPORTANT: `decode(env)` should produce `GatewayDispatch<Value>`
+                                if let Some(dispatch) = decode(env) {
+                                    // dispatch: GatewayDispatch<Value>
+                                    self.router.dispatch(&self.ctx, &dispatch).await;
+                                }
                             }
                         }
                         _none => {
@@ -85,7 +148,7 @@ impl Client {
 
                             // Preserve session details for a potential RESUME attempt.
                             let session_id = old_gw.session_id.clone();
-                            let resume_url = old_gw.resume_gateway_url.clone();
+                            let resume_gateway_url = old_gw.resume_gateway_url.clone();
                             let last_seq = old_gw.last_seq_rx.borrow().clone();
 
                             // Exponential backoff for repeated failures.
@@ -95,21 +158,20 @@ impl Client {
 
                             loop {
                                 // 1) Try RESUME first.
-                                match gateway::ws::resume(&self.token, &session_id, &resume_url, last_seq).await {
+                                match gateway::ws::resume(&self.token, &session_id, &resume_gateway_url, last_seq).await {
                                     Ok(new_gw) => {
                                         log!("OK", "RESUMED successfully");
                                         self.gateway = Some(new_gw);
                                         break; // Back to the main event loop.
                                     }
                                     Err(ResumeError::InvalidSession { resumable: false }) => {
-                                        // Expected when the session cannot be resumed — do a fresh IDENTIFY.
                                         log!("WARN", "Session not resumable — performing fresh IDENTIFY…");
 
-                                        // Recommended: small jitter before IDENTIFY.
+                                        // Small jitter before IDENTIFY.
                                         let jitter_ms: u64 = custom_prng(1000, 5000);
                                         tokio::time::sleep(std::time::Duration::from_millis(jitter_ms)).await;
 
-                                        match gateway::ws::connect(&self.token, self.intents).await {
+                                        match gateway::ws::connect(&self.token, self.intents.clone()).await {
                                             Ok(new_gw) => {
                                                 log!("OK", "Re-IDENTIFY successful (fresh session_id={})", new_gw.session_id);
                                                 self.gateway = Some(new_gw);
@@ -123,7 +185,6 @@ impl Client {
                                         }
                                     }
                                     Err(ResumeError::InvalidSession { resumable: true }) => {
-                                        // Discord says you can retry shortly.
                                         log!("WARN", "Session temporarily invalid; retrying RESUME…");
                                         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                                     }

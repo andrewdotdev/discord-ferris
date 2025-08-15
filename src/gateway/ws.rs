@@ -6,7 +6,7 @@ use tokio_tungstenite::{Connector, connect_async_tls_with_config, tungstenite::p
 
 use crate::gateway::Gateway;
 use crate::log;
-use crate::structs::gateway::GatewayIntents;
+use crate::models::gateway::GatewayIntents;
 
 /// Discord Gateway URL with API version and JSON encoding.
 const DISCORD_GATEWAY_URL: &str = "wss://gateway.discord.gg/?v=10&encoding=json";
@@ -108,7 +108,7 @@ pub async fn connect(token: &str, intents: GatewayIntents) -> anyhow::Result<Gat
         "op": 2,
         "d": {
             "token": token,
-            "intents": intents.0,
+            "intents": intents.bits(),
             "properties": { "os": "linux", "browser": "discord-ferris", "device": "discord-ferris" }
         }
     });

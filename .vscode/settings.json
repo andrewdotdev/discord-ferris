@@ -1,3 +1,11 @@
 {
-  "rust-analyzer.cargo.features": ["examples"]
+  "rust-analyzer.cargo.features": ["examples"],
+  "vscord.status.buttons.button1.active.enabled": true,
+  "vscord.status.buttons.button1.active.label": "🦀 discord-ferris GitHub",
+  "vscord.status.buttons.button1.active.url": "https://github.com/andrewdotdev/discord-ferris",
+  "vscord.status.buttons.button1.enabled": true,
+  "[rust]": {
+    "editor.defaultFormatter": "rust-lang.rust-analyzer",
+    "editor.formatOnSave": true
+  }
 }
