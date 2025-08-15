@@ -2,7 +2,7 @@
 
 This folder contains a set of Rust types adapted from the original TypeScript definitions published by the [`discord-api-types`](https://github.com/discordjs/discord-api-types) project.
 
-These types were originally licensed under the MIT License and are © their respective authors.
+These types were originally licensed under the MIT License and are © vladfrangu.
 
 ---
 
