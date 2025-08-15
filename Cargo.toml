@@ -4,7 +4,7 @@ version = "0.0.1"
 edition = "2024"
 authors = ["andrewdotdev"]
 description = "discord-ferris is a Discord API Rust library under development 🦀"
-license = "GPL3"
+license = "Apache-2.0"
 repository = "https://github.com/andrewdotdev/discord-ferris"
 readme = "README.md"
 
