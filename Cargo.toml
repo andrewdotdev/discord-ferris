@@ -1,6 +1,6 @@
 [package]
 name = "discord-ferris"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2024"
 authors = ["andrewdotdev"]
 description = "discord-ferris is a Discord API Rust library under development 🦀"
