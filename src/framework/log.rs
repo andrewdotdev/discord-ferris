@@ -1,5 +1,5 @@
 use crate::structs::colors;
-use atty::Stream;
+use std::io::IsTerminal;
 use time::{OffsetDateTime, UtcOffset, macros::format_description};
 
 #[derive(Debug, Clone, Copy)]
@@ -14,10 +14,9 @@ pub enum LogKind {
     LOG,
 }
 
-// THIS IS NECESARY
 impl std::fmt::Display for LogKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = match self {
+        f.write_str(match self {
             LogKind::GW => "GW",
             LogKind::HB => "HB",
             LogKind::EVT => "EVT",
@@ -26,28 +25,25 @@ impl std::fmt::Display for LogKind {
             LogKind::ERR => "ERR",
             LogKind::CLI => "CLI",
             LogKind::LOG => "LOG",
-        };
-        f.write_str(s)
+        })
     }
 }
 
-// This is for allowing both, ENUM and String
 impl From<&str> for LogKind {
     fn from(s: &str) -> Self {
         match s {
-            "GW" => LogKind::GW,
-            "HB" => LogKind::HB,
-            "EVT" => LogKind::EVT,
-            "OK" => LogKind::OK,
-            "WARN" => LogKind::WARN,
-            "ERR" => LogKind::ERR,
-            "CLI" => LogKind::CLI,
-            _ => LogKind::LOG,
+            "GW" => Self::GW,
+            "HB" => Self::HB,
+            "EVT" => Self::EVT,
+            "OK" => Self::OK,
+            "WARN" => Self::WARN,
+            "ERR" => Self::ERR,
+            "CLI" => Self::CLI,
+            _ => Self::LOG,
         }
     }
 }
 
-// Local-time
 fn timestamp_str() -> String {
     let offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
     let now_local = OffsetDateTime::now_utc().to_offset(offset);
@@ -64,11 +60,11 @@ pub fn colorize(kind: LogKind, color_code: &str, use_color: bool) -> String {
 }
 
 pub fn print_kind(kind: LogKind, color_code: &str, msg: String, is_err: bool) {
-    let use_color = atty::is(if is_err {
-        Stream::Stderr
+    let use_color = if is_err {
+        std::io::stderr().is_terminal()
     } else {
-        Stream::Stdout
-    });
+        std::io::stdout().is_terminal()
+    };
     let k = colorize(kind, color_code, use_color);
     let ts = format!(
         "{}[{}]{}",
@@ -87,7 +83,6 @@ pub fn print_kind(kind: LogKind, color_code: &str, msg: String, is_err: bool) {
 macro_rules! log {
     ($mode:expr, $($arg:tt)*) => {{
         let mode: $crate::framework::log::LogKind = ($mode).into();
-
         let (color_code, is_err) = match mode {
             $crate::framework::log::LogKind::GW   => ($crate::structs::colors::CYAN,    false),
             $crate::framework::log::LogKind::HB   => ($crate::structs::colors::MAGENTA, false),
@@ -98,13 +93,11 @@ macro_rules! log {
             $crate::framework::log::LogKind::CLI  => ($crate::structs::colors::WHITE,   false),
             $crate::framework::log::LogKind::LOG  => ($crate::structs::colors::WHITE,   false),
         };
-
         $crate::framework::log::print_kind(mode, color_code, format!($($arg)*), is_err);
     }};
 }
 
 pub struct Log;
-
 impl Log {
     pub fn ok(msg: impl AsRef<str>) {
         log!(LogKind::OK, "{}", msg.as_ref());

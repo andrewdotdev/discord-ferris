@@ -71,6 +71,7 @@ pub struct APIApplication {
      * @deprecated This field will be removed in v11
      * @unstable This field is no longer documented by Discord and will be removed in v11
      */
+    #[serde(default)]
     pub summary: String,
     /**
      * The hexadecimal encoded key for verification in interactions and the GameSDK's GetTicket function

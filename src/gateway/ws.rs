@@ -1,39 +1,52 @@
 use futures_util::{SinkExt, StreamExt};
 use rustls::{ClientConfig, RootCertStore};
+use serde::Deserialize;
+use serde_json::value::RawValue;
 use std::sync::Arc;
 use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::{Connector, connect_async_tls_with_config, tungstenite::protocol::Message};
 
 use crate::gateway::Gateway;
 use crate::log;
-use crate::models::gateway::GatewayIntents;
+use crate::models::gateway::{
+    GatewayDispatch, GatewayDispatchEvents as GwEvt, GatewayIntents, GatewayOpcodes,
+};
 
-/// Discord Gateway URL with API version and JSON encoding.
 const DISCORD_GATEWAY_URL: &str = "wss://gateway.discord.gg/?v=10&encoding=json";
 
-/// A typed error for RESUME attempts, allowing clearer caller behavior.
 #[derive(thiserror::Error, Debug)]
 pub enum ResumeError {
-    /// The session cannot be resumed. If `resumable` is `true`, retry soon; if `false`, do a fresh IDENTIFY.
     #[error("invalid session on resume (resumable={resumable})")]
     InvalidSession { resumable: bool },
-
-    /// Transport-level failure while attempting to resume.
     #[error(transparent)]
     Transport(#[from] anyhow::Error),
 }
 
-/// Connects to the Discord Gateway following the correct flow:
-/// 1) Receive HELLO (op=10) and extract `heartbeat_interval`.
-/// 2) Start the heartbeat loop immediately.
-/// 3) Send IDENTIFY.
-/// 4) Read synchronously until READY, then spawn a background reader task.
-///
-/// Returns a `Gateway` with channels for writing frames and receiving dispatch events.
+#[derive(Deserialize)]
+struct FrameBorrowed<'a> {
+    op: i64,
+    #[serde(default)]
+    s: Option<i64>,
+    #[serde(default)]
+    t: Option<&'a str>,
+    /// Borrowed raw payload slice.
+    #[serde(borrow)]
+    d: Option<&'a RawValue>,
+}
+
+#[derive(Deserialize)]
+struct HelloD {
+    heartbeat_interval: u64,
+}
+
+fn map_event(name: &str) -> Option<GwEvt> {
+    serde_json::from_str::<GwEvt>(&format!("\"{name}\"")).ok()
+}
+
 pub async fn connect(token: &str, intents: GatewayIntents) -> anyhow::Result<Gateway> {
     log!("GW", "connecting to discord gateway");
 
-    // --- TLS (rustls + webpki roots) ---
+    // TLS
     let provider = rustls::crypto::ring::default_provider().into();
     let mut root_store = RootCertStore::empty();
     root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
@@ -45,14 +58,13 @@ pub async fn connect(token: &str, intents: GatewayIntents) -> anyhow::Result<Gat
 
     let connector = Connector::Rustls(Arc::new(config));
 
-    // --- Open WebSocket ---
+    // WS
     let (ws_stream, _) =
         connect_async_tls_with_config(DISCORD_GATEWAY_URL, None, true, Some(connector)).await?;
     log!("OK", "connection established");
-
     let (mut write, mut read) = ws_stream.split();
 
-    // --- Dedicated writer task (single writer) ---
+    // Single writer task
     let (writer_tx, mut writer_rx) = mpsc::unbounded_channel::<Message>();
     tokio::spawn(async move {
         while let Some(msg) = writer_rx.recv().await {
@@ -61,39 +73,38 @@ pub async fn connect(token: &str, intents: GatewayIntents) -> anyhow::Result<Gat
                 break;
             }
         }
-        // Writer task exits -> socket will eventually close on read side too.
     });
 
-    // --- Helper channels ---
+    // Aux channels
     let (immediate_tx, immediate_rx) = mpsc::channel::<()>(8);
     let (last_seq_tx, last_seq_rx) = watch::channel::<Option<i64>>(None);
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
-    // --- 1) Wait for HELLO to get heartbeat_interval ---
+    // 1) HELLO
     let heartbeat_interval_ms = loop {
         let Some(frame) = read.next().await else {
             let _ = shutdown_tx.send(true);
             anyhow::bail!("gateway closed before HELLO");
         };
-
         let Message::Text(text) = frame? else {
-            continue; // Ignore binary frames while compression is disabled.
-        };
-
-        let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else {
             continue;
         };
-
-        if json.get("op").and_then(|v| v.as_i64()) == Some(10) {
-            let interval = json["d"]["heartbeat_interval"]
-                .as_u64()
-                .ok_or_else(|| anyhow::anyhow!("HELLO without heartbeat_interval"))?;
-            log!("OK", "received HELLO, heartbeat_interval={interval}ms");
-            break interval;
+        let Ok(f) = serde_json::from_str::<FrameBorrowed>(&text) else {
+            continue;
+        };
+        if f.op == 10 {
+            let d = f.d.ok_or_else(|| anyhow::anyhow!("HELLO without d"))?;
+            let hello = serde_json::from_str::<HelloD>(d.get())?;
+            log!(
+                "OK",
+                "received HELLO, heartbeat_interval={}ms",
+                hello.heartbeat_interval
+            );
+            break hello.heartbeat_interval;
         }
     };
 
-    // --- 2) Start heartbeat task ---
+    // 2) heartbeat
     tokio::spawn(crate::gateway::heartbeat::run_heartbeat(
         writer_tx.clone(),
         heartbeat_interval_ms,
@@ -101,9 +112,8 @@ pub async fn connect(token: &str, intents: GatewayIntents) -> anyhow::Result<Gat
         last_seq_rx.clone(),
         shutdown_rx,
     ));
-    log!("HB", "heartbeat task started");
 
-    // --- 3) Send IDENTIFY ---
+    // 3) IDENTIFY
     let identify = serde_json::json!({
         "op": 2,
         "d": {
@@ -112,15 +122,13 @@ pub async fn connect(token: &str, intents: GatewayIntents) -> anyhow::Result<Gat
             "properties": { "os": "linux", "browser": "discord-ferris", "device": "discord-ferris" }
         }
     });
-    writer_tx
-        .send(Message::Text(identify.to_string().into()))
-        .map_err(|e| anyhow::anyhow!("failed to queue IDENTIFY: {e}"))?;
+    writer_tx.send(Message::Text(identify.to_string().into()))?;
     log!("GW", "payload op2 (identify) queued");
 
-    // --- Event channel for higher layers ---
-    let (events_tx, events_rx) = mpsc::unbounded_channel::<serde_json::Value>();
+    // Dispatch channel (raw `d`)
+    let (events_tx, events_rx) = mpsc::unbounded_channel::<GatewayDispatch<Box<RawValue>>>();
 
-    // --- 4) Read synchronously until READY (handle opcodes along the way) ---
+    // 4) Read until READY
     let mut session_id: Option<String> = None;
     let mut resume_gateway_url: Option<String> = None;
 
@@ -129,60 +137,64 @@ pub async fn connect(token: &str, intents: GatewayIntents) -> anyhow::Result<Gat
             let _ = shutdown_tx.send(true);
             anyhow::bail!("gateway closed before READY");
         };
-
-        let Message::Text(text) = msg? else {
-            continue;
-        };
-        let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else {
+        let Message::Text(text) = msg? else { continue };
+        let Ok(f) = serde_json::from_str::<FrameBorrowed>(&text) else {
             continue;
         };
 
-        // Track the last sequence number (for heartbeats and RESUME).
-        if let Some(s) = json.get("s").and_then(|v| v.as_i64()) {
+        if let Some(s) = f.s {
             let _ = last_seq_tx.send_replace(Some(s));
         }
 
-        match json.get("op").and_then(|v| v.as_i64()) {
-            Some(0) => {
-                // DISPATCH
-                if let Some(t) = json.get("t").and_then(|v| v.as_str()) {
-                    if t == "READY" {
-                        if let Some(d) = json.get("d") {
-                            if let Some(sid) = d.get("session_id").and_then(|v| v.as_str()) {
-                                session_id = Some(sid.to_string());
-                            }
-                            if let Some(url) = d.get("resume_gateway_url").and_then(|v| v.as_str())
-                            {
-                                resume_gateway_url = Some(url.to_string());
-                            }
+        match f.op {
+            0 => {
+                let Some(t) = f.t else { continue };
+                if t == "READY" {
+                    if let Some(d) = f.d {
+                        #[derive(Deserialize)]
+                        struct ReadyD<'a> {
+                            session_id: &'a str,
+                            #[serde(default)]
+                            resume_gateway_url: Option<&'a str>,
                         }
-                        log!("EVT", "READY");
-                        let _ = events_tx.send(json);
-                        break;
-                    } else {
-                        log!("EVT", "{}", t);
-                        let _ = events_tx.send(json);
+                        if let Ok(r) = serde_json::from_str::<ReadyD>(d.get()) {
+                            session_id = Some(r.session_id.to_string());
+                            resume_gateway_url = Some(
+                                r.resume_gateway_url
+                                    .unwrap_or(DISCORD_GATEWAY_URL)
+                                    .to_string(),
+                            );
+                        }
                     }
+                    log!("EVT", "READY");
+                    let ev = GatewayDispatch {
+                        op: GatewayOpcodes::Dispatch,
+                        t: GwEvt::Ready,
+                        s: f.s.unwrap_or(0),
+                        d: Box::from(RawValue::from_string(f.d.unwrap().get().to_owned()).unwrap()),
+                    };
+                    let _ = events_tx.send(ev);
+                    break;
+                } else if let Some(evt) = map_event(t) {
+                    let ev = GatewayDispatch {
+                        op: GatewayOpcodes::Dispatch,
+                        t: evt,
+                        s: f.s.unwrap_or(0),
+                        d: Box::from(RawValue::from_string(f.d.unwrap().get().to_owned()).unwrap()),
+                    };
+                    let _ = events_tx.send(ev);
                 }
             }
-            Some(1) => {
-                // HEARTBEAT request (send immediately).
+            1 => {
                 let _ = immediate_tx.try_send(());
+            } // HEARTBEAT request
+            7 => {
+                log!("WARN", "[gw] RECONNECT requested");
             }
-            Some(7) => {
-                log!(
-                    "WARN",
-                    "[gw] RECONNECT requested (will be handled by client if the connection drops)"
-                );
+            9 => {
+                log!("WARN", "[gw] INVALID_SESSION: {:?}", f.d.map(|d| d.get()));
             }
-            Some(9) => {
-                log!(
-                    "WARN",
-                    "[gw] INVALID_SESSION: {}",
-                    json.get("d").unwrap_or(&serde_json::Value::Null)
-                );
-            }
-            Some(11) => { /* HEARTBEAT_ACK — could be used to track latency. */ }
+            11 => {}
             _ => {}
         }
     }
@@ -190,7 +202,7 @@ pub async fn connect(token: &str, intents: GatewayIntents) -> anyhow::Result<Gat
     let session_id = session_id.unwrap_or_default();
     let resume_gateway_url = resume_gateway_url.unwrap_or_else(|| DISCORD_GATEWAY_URL.to_string());
 
-    // --- Background reader task for post-READY traffic ---
+    // Background reader after READY
     let events_tx_bg = events_tx.clone();
     let last_seq_tx_bg = last_seq_tx.clone();
     let immediate_tx_bg = immediate_tx.clone();
@@ -199,32 +211,38 @@ pub async fn connect(token: &str, intents: GatewayIntents) -> anyhow::Result<Gat
             let Ok(Message::Text(text)) = msg else {
                 continue;
             };
-            let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else {
+            let Ok(f) = serde_json::from_str::<FrameBorrowed>(&text) else {
                 continue;
             };
 
-            if let Some(s) = json.get("s").and_then(|v| v.as_i64()) {
+            if let Some(s) = f.s {
                 let _ = last_seq_tx_bg.send_replace(Some(s));
             }
 
-            match json.get("op").and_then(|v| v.as_i64()) {
-                Some(0) => {
-                    let _ = events_tx_bg.send(json);
+            match f.op {
+                0 => {
+                    if let (Some(t), Some(d)) = (f.t, f.d) {
+                        if let Some(evt) = map_event(t) {
+                            let ev = GatewayDispatch {
+                                op: GatewayOpcodes::Dispatch,
+                                t: evt,
+                                s: f.s.unwrap_or(0),
+                                d: Box::from(RawValue::from_string(d.get().to_owned()).unwrap()),
+                            };
+                            let _ = events_tx_bg.send(ev);
+                        }
+                    }
                 }
-                Some(1) => {
+                1 => {
                     let _ = immediate_tx_bg.try_send(());
                 }
-                Some(7) => {
+                7 => {
                     log!("WARN", "[gw] RECONNECT requested");
                 }
-                Some(9) => {
-                    log!(
-                        "WARN",
-                        "[gw] INVALID_SESSION: {}",
-                        json.get("d").unwrap_or(&serde_json::Value::Null)
-                    );
+                9 => {
+                    log!("WARN", "[gw] INVALID_SESSION during running");
                 }
-                Some(11) => { /* HEARTBEAT_ACK */ }
+                11 => {}
                 _ => {}
             }
         }
@@ -241,9 +259,6 @@ pub async fn connect(token: &str, intents: GatewayIntents) -> anyhow::Result<Gat
     })
 }
 
-/// Attempts to resume an existing Gateway session using op=6 RESUME.
-/// If the session cannot be resumed (`INVALID_SESSION: false`), this returns `ResumeError::InvalidSession`.
-/// The caller should then fall back to a fresh IDENTIFY using `connect(...)`.
 pub async fn resume(
     token: &str,
     session_id: &str,
@@ -257,7 +272,7 @@ pub async fn resume(
         resume_gateway_url
     );
 
-    // --- TLS (rustls + webpki roots) ---
+    // TLS
     let provider = rustls::crypto::ring::default_provider().into();
     let mut root_store = RootCertStore::empty();
     root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
@@ -270,16 +285,15 @@ pub async fn resume(
 
     let connector = Connector::Rustls(Arc::new(config));
 
-    // --- Open WebSocket ---
+    // WS
     let resume_url = normalize_gateway_url(resume_gateway_url);
     let (ws_stream, _) = connect_async_tls_with_config(resume_url, None, true, Some(connector))
         .await
         .map_err(|e| ResumeError::Transport(anyhow::anyhow!(e)))?;
     log!("OK", "reconnected websocket");
-
     let (mut write, mut read) = ws_stream.split();
 
-    // --- Dedicated writer task (single writer) ---
+    // Writer
     let (writer_tx, mut writer_rx) = mpsc::unbounded_channel::<Message>();
     tokio::spawn(async move {
         while let Some(msg) = writer_rx.recv().await {
@@ -290,12 +304,12 @@ pub async fn resume(
         }
     });
 
-    // --- Helper channels ---
+    // Aux channels
     let (immediate_tx, immediate_rx) = mpsc::channel::<()>(8);
     let (last_seq_tx, last_seq_rx) = watch::channel::<Option<i64>>(last_seq);
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
-    // --- 1) Wait for HELLO to get heartbeat_interval ---
+    // HELLO
     let heartbeat_interval_ms = loop {
         let Some(frame) = read.next().await else {
             let _ = shutdown_tx.send(true);
@@ -303,31 +317,28 @@ pub async fn resume(
                 "gateway closed before HELLO (resume)"
             )));
         };
-
         let Message::Text(text) = frame.map_err(|e| ResumeError::Transport(anyhow::anyhow!(e)))?
         else {
             continue;
         };
-
-        let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else {
+        let Ok(f) = serde_json::from_str::<FrameBorrowed>(&text) else {
             continue;
         };
-
-        if json.get("op").and_then(|v| v.as_i64()) == Some(10) {
-            let Some(interval) = json["d"]["heartbeat_interval"].as_u64() else {
-                return Err(ResumeError::Transport(anyhow::anyhow!(
-                    "HELLO without heartbeat_interval"
-                )));
-            };
+        if f.op == 10 {
+            let d =
+                f.d.ok_or_else(|| ResumeError::Transport(anyhow::anyhow!("HELLO without d")))?;
+            let hello = serde_json::from_str::<HelloD>(d.get())
+                .map_err(|e| ResumeError::Transport(anyhow::anyhow!(e)))?;
             log!(
                 "OK",
-                "received HELLO (resume), heartbeat_interval={interval}ms"
+                "received HELLO (resume), heartbeat_interval={}ms",
+                hello.heartbeat_interval
             );
-            break interval;
+            break hello.heartbeat_interval;
         }
     };
 
-    // --- 2) Start heartbeat task BEFORE RESUME ---
+    // Heartbeat before RESUME
     tokio::spawn(crate::gateway::heartbeat::run_heartbeat(
         writer_tx.clone(),
         heartbeat_interval_ms,
@@ -335,9 +346,8 @@ pub async fn resume(
         last_seq_rx.clone(),
         shutdown_rx,
     ));
-    log!("HB", "heartbeat task started (resume)");
 
-    // --- 3) Send RESUME ---
+    // RESUME
     let resume_payload = serde_json::json!({
         "op": 6,
         "d": { "token": token, "session_id": session_id, "seq": last_seq }
@@ -347,10 +357,10 @@ pub async fn resume(
         .map_err(|e| ResumeError::Transport(anyhow::anyhow!("failed to queue RESUME: {e}")))?;
     log!("GW", "payload op6 (resume) queued with seq={last_seq:?}");
 
-    // --- Event channel for higher layers ---
-    let (events_tx, events_rx) = mpsc::unbounded_channel::<serde_json::Value>();
+    // Dispatch channel
+    let (events_tx, events_rx) = mpsc::unbounded_channel::<GatewayDispatch<Box<RawValue>>>();
 
-    // --- 4) Read synchronously until RESUMED (handle failures along the way) ---
+    // Wait until RESUMED
     loop {
         let Some(msg) = read.next().await else {
             let _ = shutdown_tx.send(true);
@@ -362,45 +372,58 @@ pub async fn resume(
         else {
             continue;
         };
-        let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else {
+        let Ok(f) = serde_json::from_str::<FrameBorrowed>(&text) else {
             continue;
         };
 
-        if let Some(s) = json.get("s").and_then(|v| v.as_i64()) {
+        if let Some(s) = f.s {
             let _ = last_seq_tx.send_replace(Some(s));
         }
 
-        match json.get("op").and_then(|v| v.as_i64()) {
-            Some(0) => {
-                if let Some(t) = json.get("t").and_then(|v| v.as_str()) {
-                    if t == "RESUMED" {
-                        log!("EVT", "RESUMED");
-                        let _ = events_tx.send(json);
-                        break;
-                    } else {
-                        log!("EVT", "{}", t);
-                        let _ = events_tx.send(json);
+        match f.op {
+            0 => {
+                if let Some("RESUMED") = f.t {
+                    log!("EVT", "RESUMED");
+                    let ev = GatewayDispatch {
+                        op: GatewayOpcodes::Dispatch,
+                        t: GwEvt::Resumed,
+                        s: f.s.unwrap_or(0),
+                        d: Box::from(RawValue::from_string(f.d.unwrap().get().to_owned()).unwrap()),
+                    };
+                    let _ = events_tx.send(ev);
+                    break;
+                } else if let (Some(t), Some(d)) = (f.t, f.d) {
+                    if let Some(evt) = map_event(t) {
+                        let ev = GatewayDispatch {
+                            op: GatewayOpcodes::Dispatch,
+                            t: evt,
+                            s: f.s.unwrap_or(0),
+                            d: Box::from(RawValue::from_string(d.get().to_owned()).unwrap()),
+                        };
+                        let _ = events_tx.send(ev);
                     }
                 }
             }
-            Some(1) => {
+            1 => {
                 let _ = immediate_tx.try_send(());
-            } // HEARTBEAT request
-            Some(7) => {
+            }
+            7 => {
                 log!("WARN", "[gw] RECONNECT requested during RESUME");
             }
-            Some(9) => {
-                let resumable = json.get("d").and_then(|v| v.as_bool()).unwrap_or(false);
+            9 => {
+                let resumable =
+                    f.d.and_then(|v| v.get().parse::<bool>().ok())
+                        .unwrap_or(false);
                 log!("WARN", "[gw] INVALID_SESSION during RESUME: {resumable}");
                 let _ = shutdown_tx.send(true);
                 return Err(ResumeError::InvalidSession { resumable });
             }
-            Some(11) => { /* HEARTBEAT_ACK */ }
+            11 => {}
             _ => {}
         }
     }
 
-    // --- Background reader task for post-RESUMED traffic ---
+    // Background reader after RESUMED
     let events_tx_bg = events_tx.clone();
     let last_seq_tx_bg = last_seq_tx.clone();
     let immediate_tx_bg = immediate_tx.clone();
@@ -409,28 +432,38 @@ pub async fn resume(
             let Ok(Message::Text(text)) = msg else {
                 continue;
             };
-            let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else {
+            let Ok(f) = serde_json::from_str::<FrameBorrowed>(&text) else {
                 continue;
             };
 
-            if let Some(s) = json.get("s").and_then(|v| v.as_i64()) {
+            if let Some(s) = f.s {
                 let _ = last_seq_tx_bg.send_replace(Some(s));
             }
 
-            match json.get("op").and_then(|v| v.as_i64()) {
-                Some(0) => {
-                    let _ = events_tx_bg.send(json);
+            match f.op {
+                0 => {
+                    if let (Some(t), Some(d)) = (f.t, f.d) {
+                        if let Some(evt) = map_event(t) {
+                            let ev = GatewayDispatch {
+                                op: GatewayOpcodes::Dispatch,
+                                t: evt,
+                                s: f.s.unwrap_or(0),
+                                d: Box::from(RawValue::from_string(d.get().to_owned()).unwrap()),
+                            };
+                            let _ = events_tx_bg.send(ev);
+                        }
+                    }
                 }
-                Some(1) => {
+                1 => {
                     let _ = immediate_tx_bg.try_send(());
                 }
-                Some(7) => {
+                7 => {
                     log!("WARN", "[gw] RECONNECT requested");
                 }
-                Some(9) => {
+                9 => {
                     log!("WARN", "[gw] INVALID_SESSION during running");
                 }
-                Some(11) => { /* HEARTBEAT_ACK */ }
+                11 => {}
                 _ => {}
             }
         }

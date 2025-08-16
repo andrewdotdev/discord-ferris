@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_repr::{Deserialize_repr, Serialize_repr};
 
 use super::guild::APIGuildIntegration;
 
@@ -228,7 +229,7 @@ pub enum UserFlags {
 /**
  * @see {@link https://discord.com/developers/docs/resources/user#user-object-premium-types}
  */
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize_repr, Deserialize_repr)]
 #[repr(u8)]
 pub enum UserPremiumType {
     None = 0,
@@ -346,7 +347,7 @@ pub enum ConnectionService {
     YouTube,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize_repr, Deserialize_repr)]
 #[repr(u8)]
 pub enum ConnectionVisibility {
     /**

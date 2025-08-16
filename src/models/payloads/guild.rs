@@ -1,4 +1,3 @@
-use crate::utils::serde::flags_numeric;
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
@@ -794,8 +793,8 @@ pub struct APIFlaggedGuildMember {
      *
      * @defaultValue `0`
      */
-    #[serde(with = "flags_numeric")]
-    pub flags: GuildMemberFlags,
+    #[serde(with = "crate::utils::serde::flags_numeric_opt")]
+    pub flags: Option<GuildMemberFlags>,
 }
 
 /**

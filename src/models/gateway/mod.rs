@@ -15,7 +15,7 @@ use crate::models::payloads::{
     GatewayThreadMembersUpdate as RawGatewayThreadMembersUpdate, InviteTargetType,
     PresenceUpdateStatus,
 };
-use crate::models::rest::ReactionType;
+// use crate::models::rest::ReactionType;
 
 /// Simple replacement for the TS utility `_Nullable<T>`
 pub type _Nullable<T> = Option<T>;
@@ -1601,6 +1601,12 @@ pub struct GatewayMessageCreateDispatchData {
     pub message: APIBaseMessage,
 }
 
+impl GatewayMessageCreateDispatchData {
+    pub fn is_bot(&self) -> bool {
+        self.message.author.bot.unwrap_or(false)
+    }
+}
+
 /**
  * @see {@link https://discord.com/developers/docs/topics/gateway-events#message-update}
  */
@@ -1740,8 +1746,37 @@ pub struct GatewayMessageReactionAddDispatchData {
      * Colors used for super-reaction animation in "#rrggbb" format
      */
     pub burst_colors: Option<Vec<String>>,
-    #[serde(flatten)]
-    pub rest: GatewayMessageReactionRemoveDispatchData,
+
+    /**
+     * The id of the user
+     */
+    pub user_id: String,
+    /**
+     * The id of the channel
+     */
+    pub channel_id: String,
+    /**
+     * The id of the message
+     */
+    pub message_id: String,
+    /**
+     * The id of the guild
+     */
+    pub guild_id: Option<String>,
+    /**
+     * The emoji used to react
+     *
+     * @see {@link https://discord.com/developers/docs/resources/emoji#emoji-object}
+     */
+    pub emoji: APIEmoji,
+    /**
+     * True if this is a super-reaction
+     */
+    pub burst: bool,
+    /**
+     * The type of reaction
+     */
+    pub r#type: u8,
 }
 
 /**
@@ -1784,7 +1819,7 @@ pub struct GatewayMessageReactionRemoveDispatchData {
     /**
      * The type of reaction
      */
-    pub r#type: ReactionType,
+    pub r#type: u8,
 }
 
 /**
@@ -1819,8 +1854,18 @@ pub struct GatewayMessageReactionRemoveEmojiDispatchData {
      * The emoji that was removed
      */
     pub emoji: APIEmoji,
-    #[serde(flatten)]
-    pub rest: GatewayMessageReactionRemoveData,
+    /**
+     * The id of the channel
+     */
+    pub channel_id: String,
+    /**
+     * The id of the message
+     */
+    pub message_id: String,
+    /**
+     * The id of the guild
+     */
+    pub guild_id: Option<String>,
 }
 
 /**

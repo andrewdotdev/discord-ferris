@@ -1,15 +1,13 @@
 use std::error::Error;
 
+mod events; // <-- top-level, NOT inside main()
+
 #[cfg(feature = "examples")]
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     use discord_ferris::client::Client;
-    use discord_ferris::models::gateway::{
-        GatewayDispatchEvents as GwEvt, GatewayIntents, GatewayMessageCreateDispatchData,
-        GatewayReadyDispatchData,
-    };
+    use discord_ferris::models::gateway::GatewayIntents;
     use dotenvy::dotenv;
-    // use serde_json::Value;
 
     dotenv().ok();
     let token = std::env::var("DISCORD_TOKEN").expect("Missing token");
@@ -17,32 +15,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let intents = GatewayIntents::all();
     let mut client = Client::new(&token, intents);
 
-    // READY (once) — payload typed
-    client.once::<GatewayReadyDispatchData, _, _>(GwEvt::Ready, |_ctx, ready| async move {
-        discord_ferris::log!(
-            "OK",
-            "Logged as {} session={}",
-            ready.user.username,
-            ready.session_id
-        );
-    });
-
-    // MESSAGE_CREATE — payload typed
-    client.on::<GatewayMessageCreateDispatchData, _, _>(
-        GwEvt::MessageCreate,
-        |ctx, mc| async move {
-            let is_bot = mc.message.base.author.bot.unwrap_or(false);
-            if is_bot {
-                return;
-            }
-
-            println!("{:.?}", mc); // only for testing
-            let content = mc.message.base.content;
-            if content == "!ping" {
-                let _ = ctx.reply("PONG!").await;
-            }
-        },
-    );
+    // Type is inferred by the method (Ready -> GatewayReadyDispatchData).
+    client
+        .once_ready(events::ready::on_ready)
+        .on_message_create(events::message_create::on_message_create)
+        .on_message_reaction_add(events::message_reaction_add::on_message_reaction_add);
 
     client.login().await?;
     Ok(())
