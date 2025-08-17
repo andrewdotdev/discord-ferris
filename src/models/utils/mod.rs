@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Adapted from discord-api-types (c) vladfrangu
+// Rust port and modifications (c) 2025 andrewdotdev
+
 #![allow(non_snake_case)]
 
 use crate::models::payloads::_interactions::_application_commands::context_menu;
