@@ -1,6 +1,8 @@
-use crate::models::payloads::base::{
-    APIDMInteractionWrapper, APIGuildInteractionWrapper,
-};
+// SPDX-License-Identifier: MIT
+// Adapted from discord-api-types (c) vladfrangu
+// Rust port and modifications (c) 2025 andrewdotdev
+
+use crate::models::payloads::base::{APIDMInteractionWrapper, APIGuildInteractionWrapper};
 use crate::models::payloads::channel::APIBaseComponent;
 use crate::models::payloads::responses::InteractionType;
 use crate::models::payloads::{ComponentType, base::APIBaseInteraction};

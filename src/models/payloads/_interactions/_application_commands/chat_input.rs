@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Adapted from discord-api-types (c) vladfrangu
+// Rust port and modifications (c) 2025 andrewdotdev
+
 //! @see https://discord.com/developers/docs/interactions/application-commands#application-command-object-application-command-option-structure
 
 use serde::{Deserialize, Serialize};

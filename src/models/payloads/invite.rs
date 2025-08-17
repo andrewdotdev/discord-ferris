@@ -1,11 +1,13 @@
+// SPDX-License-Identifier: MIT
+// Adapted from discord-api-types (c) vladfrangu
+// Rust port and modifications (c) 2025 andrewdotdev
+
 use serde::{Deserialize, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
 
 use crate::models::payloads::application::APIApplication;
 use crate::models::payloads::channel::APIInviteChannel;
-use crate::models::payloads::guild::{
-    GuildFeature, GuildNSFWLevel, GuildVerificationLevel,
-};
+use crate::models::payloads::guild::{GuildFeature, GuildNSFWLevel, GuildVerificationLevel};
 use crate::models::payloads::guild_scheduled_event::APIGuildScheduledEvent;
 use crate::models::payloads::stage_instance::APIInviteStageInstance;
 use crate::models::payloads::user::APIUser;

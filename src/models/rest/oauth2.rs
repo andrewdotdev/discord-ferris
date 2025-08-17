@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Adapted from discord-api-types (c) vladfrangu
+// Rust port and modifications (c) 2025 andrewdotdev
+
 use crate::models::payloads::{APIApplication, APIGuild, APIUser, APIWebhook, OAuth2Scopes};
 use serde::{Deserialize, Serialize};
 

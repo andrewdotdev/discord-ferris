@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Adapted from discord-api-types (c) vladfrangu
+// Rust port and modifications (c) 2025 andrewdotdev
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

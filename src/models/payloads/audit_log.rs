@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Adapted from discord-api-types (c) vladfrangu
+// Rust port and modifications (c) 2025 andrewdotdev
+
 //! Types extracted from https://discord.com/developers/docs/resources/audit-log
 
 use serde::{Deserialize, Serialize};

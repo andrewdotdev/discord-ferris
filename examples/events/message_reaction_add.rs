@@ -1,5 +1,6 @@
-use discord_ferris::df_prelude::GatewayMessageReactionAddDispatchData;
-use discord_ferris::framework::context::Ctx;
+use discord_ferris::{
+    framework::context::Ctx, models::gateway::GatewayMessageReactionAddDispatchData,
+};
 
 // Runs on every MESSAGE_REACTION_ADD.
 pub async fn on_message_reaction_add(ctx: Ctx, mra: GatewayMessageReactionAddDispatchData) {

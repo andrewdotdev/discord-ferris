@@ -1,8 +1,4 @@
-//! Public REST surface.
-//!
-//! This module re-exports everything from its submodules so people can do:
-//! `use crate::rest::*;`
-//! or reach items like: `crate::rest::RESTPostAPIWebhookWithTokenJSONBody`
+//! Public REST re-exports.
 
 // ---- Submodules (each should correspond to a `*.rs` file in this folder) ----
 

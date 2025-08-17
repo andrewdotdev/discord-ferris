@@ -1,8 +1,8 @@
-//! Public REST surface.
-//!
-//! This module re-exports everything from its submodules so consumers can just:
-//! `use crate::rest::*;`
-//! or reach items like: `crate::rest::RESTPostAPIWebhookWithTokenJSONBody`
+// SPDX-License-Identifier: MIT
+// Adapted from discord-api-types (c) vladfrangu
+// Rust port and modifications (c) 2025 andrewdotdev
+
+//! Public PAYLOADS re-exports.
 
 // ---- Submodules ----
 
