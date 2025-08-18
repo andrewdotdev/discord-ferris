@@ -1,7 +1,7 @@
 use std::future::Future;
 use std::sync::Arc;
 
-use crate::framework::log::Log;
+use crate::discord_ferris::log::Log;
 use crate::gateway::{self, Gateway};
 use crate::http::Http;
 use crate::log;
@@ -52,7 +52,7 @@ impl Client {
             token,
             intents,
             gateway: None,
-            log: Log,
+            log: Log {},
             router,
             ctx,
         }

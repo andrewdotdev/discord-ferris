@@ -1,0 +1,20 @@
+[package]
+name = "discord-ferris-macros"
+version = "0.1.0"
+edition.workspace = true
+authors = ["andrewdotdev"]
+description = "Procedural macros for discord-ferris 🦀 (Internal Crate)"
+license.workspace = true
+documentation.workspace = true
+repository.workspace = true
+readme = "README.md"
+keywords = ["discord", "proc-macro", "events", "bot", "rust"]
+categories.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1.0.101"
+quote = "1.0.40"
+syn = { version = "2.0.106", features = ["full"] }

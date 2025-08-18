@@ -1,0 +1,40 @@
+[package]
+name = "discord-ferris"
+edition.workspace = true
+version = "0.0.2"
+authors = ["andrewdotdev"]
+description = "discord-ferris is a Discord API Rust library under development 🦀"
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+documentation.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lib]
+path = "src/lib.rs"
+crate-type = ["rlib"]
+
+[features]
+default = []
+examples = ["dotenvy"]
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = { version = "0.27.0", features = ["__rustls-tls"] }
+reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value"] }
+anyhow = "1.0.98"
+rustls = { version= "0.23.31", features = ["ring"] }
+dotenvy = { version = "0.15", optional = true }
+thiserror = "2.0.12"
+time = { version = "0.3.41", features = ["formatting", "local-offset", "macros"]}
+async-trait = "0.1.88"
+serde_repr = "0.1.20"
+bitflags = { version = "2.9.1", features = ["serde"] }
+futures-util = "0.3.31"
+webpki-roots = "1.0.2"
+discord-ferris-macros = { version = "0.1", path = "../discord-ferris-macros" }
+inventory = "0.3.20"
+linkme = "0.3.33"

@@ -1,33 +1,15 @@
-[package]
-name = "discord-ferris"
-version = "0.0.2"
+[workspace]
+members = [
+  "discord-ferris",
+  "discord-ferris-macros",
+]
+resolver = "2"
+
+[workspace.package]
 edition = "2024"
-authors = ["andrewdotdev"]
-description = "discord-ferris is a Discord API Rust library under development 🦀"
 license = "Apache-2.0"
-repository = "https://github.com/andrewdotdev/discord-ferris"
 readme = "README.md"
-
-[lib]
-path = "src/lib.rs"
-
-[features]
-default = []
-examples = ["dotenvy"]
-
-[dependencies]
-tokio = { version = "1", features = ["full"] }
-tokio-tungstenite = { version = "0.27.0", features = ["__rustls-tls"] }
-reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["raw_value"] }
-anyhow = "1.0.98"
-rustls = { version= "0.23.31", features = ["ring"] }
-dotenvy = { version = "0.15", optional = true }
-thiserror = "2.0.12"
-time = { version = "0.3.41", features = ["formatting", "local-offset", "macros"]}
-async-trait = "0.1.88"
-serde_repr = "0.1.20"
-bitflags = { version = "2.9.1", features = ["serde"] }
-futures-util = "0.3.31"
-webpki-roots = "1.0.2"
+repository = "https://github.com/andrewdotdev/discord-ferris"
+documentation = "https://docs.rs/discord-ferris"
+keywords = ["discord", "api", "gateway", "library", "rust"]
+categories = ["api-bindings", "asynchronous"]

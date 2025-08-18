@@ -140,23 +140,40 @@ impl Router {
     pub async fn dispatch(&self, base: &Ctx, ev: Arc<GatewayDispatch<Box<RawValue>>>) {
         let ctx_arc = Arc::clone(&base.inner);
 
+        // on_all
         for h in &self.any {
             h.call(Arc::clone(&ctx_arc), Arc::clone(&ev)).await;
         }
 
         let kind = ev.t.clone();
 
+        // --- once handlers
+        let mut had_handlers = false;
         if let Some(list) = self.once_routes.lock().unwrap().remove(&kind) {
+            had_handlers |= !list.is_empty();
             for h in list {
                 h.call(Arc::clone(&ctx_arc), Arc::clone(&ev)).await;
             }
         }
 
+        // --- persistent handlers
         if let Some(list) = self.routes.get(&kind) {
+            had_handlers |= !list.is_empty();
             for h in list {
                 h.call(Arc::clone(&ctx_arc), Arc::clone(&ev)).await;
             }
-        } else {
+        }
+
+        use crate::framework::events;
+        let ran_macros = events::dispatch_inventory_raw(
+            Ctx::with_event(Arc::clone(&ctx_arc), Arc::clone(&ev)),
+            kind.clone(),
+            &ev.d,
+        )
+        .await;
+        had_handlers |= ran_macros > 0;
+
+        if !had_handlers {
             for h in &self.unknown {
                 h.call(Arc::clone(&ctx_arc), Arc::clone(&ev)).await;
             }

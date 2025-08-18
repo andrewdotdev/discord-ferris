@@ -82,22 +82,22 @@ pub fn print_kind(kind: LogKind, color_code: &str, msg: String, is_err: bool) {
 #[macro_export]
 macro_rules! log {
     ($mode:expr, $($arg:tt)*) => {{
-        let mode: $crate::framework::log::LogKind = ($mode).into();
+        let mode: $crate::log::LogKind = ($mode).into();
         let (color_code, is_err) = match mode {
-            $crate::framework::log::LogKind::GW   => ($crate::structs::colors::CYAN,    false),
-            $crate::framework::log::LogKind::HB   => ($crate::structs::colors::MAGENTA, false),
-            $crate::framework::log::LogKind::EVT  => ($crate::structs::colors::BLUE,    false),
-            $crate::framework::log::LogKind::OK   => ($crate::structs::colors::GREEN,   false),
-            $crate::framework::log::LogKind::WARN => ($crate::structs::colors::YELLOW,  true),
-            $crate::framework::log::LogKind::ERR  => ($crate::structs::colors::RED,     true),
-            $crate::framework::log::LogKind::CLI  => ($crate::structs::colors::WHITE,   false),
-            $crate::framework::log::LogKind::LOG  => ($crate::structs::colors::WHITE,   false),
+            $crate::log::LogKind::GW   => ($crate::structs::colors::CYAN,    false),
+            $crate::log::LogKind::HB   => ($crate::structs::colors::MAGENTA, false),
+            $crate::log::LogKind::EVT  => ($crate::structs::colors::BLUE,    false),
+            $crate::log::LogKind::OK   => ($crate::structs::colors::GREEN,   false),
+            $crate::log::LogKind::WARN => ($crate::structs::colors::YELLOW,  true),
+            $crate::log::LogKind::ERR  => ($crate::structs::colors::RED,     true),
+            $crate::log::LogKind::CLI  => ($crate::structs::colors::WHITE,   false),
+            $crate::log::LogKind::LOG  => ($crate::structs::colors::WHITE,   false),
         };
-        $crate::framework::log::print_kind(mode, color_code, format!($($arg)*), is_err);
+        $crate::log::print_kind(mode, color_code, format!($($arg)*), is_err);
     }};
 }
 
-pub struct Log;
+pub struct Log {}
 impl Log {
     pub fn ok(msg: impl AsRef<str>) {
         log!(LogKind::OK, "{}", msg.as_ref());
