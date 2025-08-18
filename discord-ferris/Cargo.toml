@@ -6,7 +6,7 @@ authors = ["andrewdotdev"]
 description = "discord-ferris is a Discord API Rust library under development 🦀"
 license.workspace = true
 repository.workspace = true
-readme.workspace = true
+readme = "README.md"
 documentation.workspace = true
 keywords.workspace = true
 categories.workspace = true
@@ -35,6 +35,6 @@ serde_repr = "0.1.20"
 bitflags = { version = "2.9.1", features = ["serde"] }
 futures-util = "0.3.31"
 webpki-roots = "1.0.2"
-discord-ferris-macros = { version = "0.1", path = "../discord-ferris-macros" }
+discord-ferris-macros = "0.1.0"
 inventory = "0.3.20"
 linkme = "0.3.33"
