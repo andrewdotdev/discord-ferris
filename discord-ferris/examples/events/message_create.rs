@@ -1,7 +1,7 @@
 use discord_ferris::prelude::*;
 
 #[event_handler]
-pub async fn on_message_create(ctx: Ctx, mc: GatewayMessageCreateDispatchData) {
+pub async fn on_message_create(ctx: Ctx, mc: MessageCreate) {
     if mc.is_bot() {
         return;
     }

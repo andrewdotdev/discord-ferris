@@ -1,7 +1,7 @@
 use discord_ferris::prelude::*;
 
 #[event_handler]
-pub async fn on_message_reaction_add(ctx: Ctx, mra: GatewayMessageReactionAddDispatchData) {
+pub async fn on_message_reaction_add(ctx: Ctx, mra: MessageReactionAdd) {
     discord_ferris::log!(
         "LOG",
         "{} reactioned with {:.?} on {}",

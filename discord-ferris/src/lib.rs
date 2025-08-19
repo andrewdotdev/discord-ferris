@@ -11,7 +11,7 @@ pub use discord_ferris_macros::event_handler;
 
 pub mod prelude {
     pub use crate::framework::context::Ctx;
-    pub use crate::models::gateway::*;
+    pub use crate::structs::gateway::*;
     pub use discord_ferris_macros::event_handler;
 }
 
