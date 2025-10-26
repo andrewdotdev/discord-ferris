@@ -1,10 +1,8 @@
-use std::error::Error;
-
 mod events; // <-- top-level
 
 #[cfg(feature = "examples")]
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     use discord_ferris::client::Client;
     use discord_ferris::models::gateway::GatewayIntents;
     use dotenvy::dotenv;
@@ -22,5 +20,5 @@ async fn main() -> Result<(), Box<dyn Error>> {
 #[cfg(not(feature = "examples"))]
 fn main() {
     eprintln!("This example requires the `examples` feature");
-    eprintln!("Usage: cargo run --features examples");
+    eprintln!("Usage: cargo run -p discord-ferris --example ferris-example --features examples");
 }

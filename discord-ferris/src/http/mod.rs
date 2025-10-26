@@ -2,7 +2,6 @@ use reqwest::Client as ReqClient;
 use reqwest::header::AUTHORIZATION;
 use serde::Serialize;
 
-// Keep base URL as a constant; avoid storing it per-instance.
 const DISCORD_API_BASE: &str = "https://discord.com/api/v10";
 
 pub struct Http {

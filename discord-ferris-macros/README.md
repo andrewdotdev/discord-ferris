@@ -13,7 +13,7 @@ Procedural macros for **discord-ferris**.
 
 ## Install
 
-You **don’t need** to add this crate directly — `discord-ferris` re-exports the macros.
+You **don’t need** to add this crate directly, `discord-ferris` re-exports the macros.
 
 ```toml
 [dependencies]

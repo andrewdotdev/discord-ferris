@@ -119,7 +119,7 @@ pub async fn connect(token: &str, intents: GatewayIntents) -> anyhow::Result<Gat
         "d": {
             "token": token,
             "intents": intents.bits(),
-            "properties": { "os": "linux", "browser": "discord-ferris", "device": "discord-ferris" }
+            "properties": { "os": std::env::consts::OS, "browser": "discord-ferris", "device": "discord-ferris" }
         }
     });
     writer_tx.send(Message::Text(identify.to_string().into()))?;
